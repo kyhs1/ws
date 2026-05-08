@@ -64,12 +64,11 @@
     const db = firebase.firestore();
     const APP_ID = 'study-master-v1'; 
 
-    // 아이콘 컴포넌트 (버전 호환성 에러 수정 완료)
+    // 아이콘 컴포넌트
     const Icon = ({ name, size = 24, className = "" }) => {
       const iconRef = useRef(null);
       useEffect(() => {
         if (iconRef.current) {
-          // 최신 Lucide 버전의 아이콘명 변경 대응
           let actualName = name;
           if (name === 'CheckCircle2' && !lucide.icons['CheckCircle2']) actualName = 'CircleCheck';
           if (name === 'AlertCircle' && !lucide.icons['AlertCircle']) actualName = 'CircleAlert';
@@ -96,7 +95,7 @@
       const [currentCardIndex, setCurrentCardIndex] = useState(0);
       const [isFlipped, setIsFlipped] = useState(false);
       const [isListening, setIsListening] = useState(false);
-      const [isTransitioning, setIsTransitioning] = useState(false); // 엔터키 연타 에러 방지
+      const [isTransitioning, setIsTransitioning] = useState(false); 
       const [quizScore, setQuizScore] = useState(0);
       const [quizResults, setQuizResults] = useState([]); 
       const [quizType, setQuizType] = useState(null); 
@@ -105,6 +104,42 @@
       const [importSubjectName, setImportSubjectName] = useState(""); 
       const [feedback, setFeedback] = useState(null);
       const [isLoading, setIsLoading] = useState(true);
+
+      const activeQuizRef = useRef(false); // 보이스 퀴즈 자동 진행 상태를 관리하는 Ref
+
+      // 뷰가 변경될 때 재생 중인 음성 취소 및 퀴즈 루프 중단
+      useEffect(() => {
+        if (view !== 'quiz') {
+          activeQuizRef.current = false;
+          if (window.speechSynthesis) window.speechSynthesis.cancel();
+        }
+      }, [view]);
+
+      // --- 자동 진행을 위한 스마트 TTS (음성 출력) 함수 ---
+      const speakText = (text, onEnd) => {
+        if (!window.speechSynthesis) {
+          if (onEnd) onEnd();
+          return;
+        }
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'ko-KR';
+        utterance.rate = 1.0;
+        
+        if (onEnd) {
+          utterance.onend = () => {
+            // 말하기가 끝난 후 아주 약간의 딜레이(300ms)를 주고 다음 동작 실행
+            setTimeout(() => {
+              if (activeQuizRef.current) onEnd();
+            }, 300);
+          };
+          utterance.onerror = (e) => {
+            console.error("TTS Error:", e);
+            if (activeQuizRef.current) onEnd();
+          };
+        }
+        window.speechSynthesis.speak(utterance);
+      };
 
       // --- 인증 로직 ---
       useEffect(() => {
@@ -146,7 +181,6 @@
           const snapshot = await cardsRef.get();
           let loadedCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           
-          // 랜덤 셔플
           for (let i = loadedCards.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [loadedCards[i], loadedCards[j]] = [loadedCards[j], loadedCards[i]];
@@ -163,7 +197,7 @@
         }
       };
 
-      // --- 플래시 카드 암기 시작 로직 (매번 랜덤 섞기) ---
+      // --- 플래시 카드 암기 시작 로직 ---
       const startStudy = () => {
         if (cards.length === 0) {
           showFeedback("문제가 없습니다.");
@@ -180,25 +214,6 @@
         setView('study');
       };
 
-      // --- 음성 인식 (STT) ---
-      const startListening = () => {
-        if (isTransitioning) return; 
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-          showFeedback("음성 인식을 지원하지 않는 브라우저입니다.");
-          return;
-        }
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'ko-KR';
-        recognition.onstart = () => setIsListening(true);
-        recognition.onend = () => setIsListening(false);
-        recognition.onresult = (event) => {
-          const transcript = event.results[0][0].transcript;
-          checkAnswer(transcript);
-        };
-        recognition.start();
-      };
-
       // --- 플래시 카드 터치 로직 ---
       const handleCardClick = () => {
         if (!isFlipped) {
@@ -212,6 +227,113 @@
             showFeedback("학습을 완료했습니다!");
           }
         }
+      };
+
+      // --- 완전 자동화된 보이스 듣기 기능 ---
+      const startListeningHandsFree = (onResult) => {
+        if (!activeQuizRef.current) return;
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          showFeedback("음성 인식을 지원하지 않는 브라우저입니다.");
+          return;
+        }
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'ko-KR';
+        let hasResult = false;
+
+        recognition.onstart = () => setIsListening(true);
+        recognition.onresult = (event) => {
+          hasResult = true;
+          const transcript = event.results[0][0].transcript;
+          if (activeQuizRef.current && onResult) {
+            onResult(transcript);
+          }
+        };
+        recognition.onend = () => {
+          setIsListening(false);
+          // 침묵으로 인해 타임아웃 종료되었을 경우 "패스"로 간주
+          if (!hasResult && activeQuizRef.current && onResult) {
+            onResult("패스"); 
+          }
+        };
+        
+        try {
+          recognition.start();
+        } catch(e) {
+          console.error(e);
+          setIsListening(false);
+          if (activeQuizRef.current && onResult) onResult("패스"); 
+        }
+      };
+
+      // --- 보이스 퀴즈: 1문항 루프 사이클 ---
+      const runVoiceTurn = (index, quizCards) => {
+        if (!activeQuizRef.current) return;
+        const card = quizCards[index];
+        if (!card) return;
+
+        // 1. 문제를 읽어줍니다.
+        speakText(card.question, () => {
+          if (!activeQuizRef.current) return;
+          // 2. 다 읽으면 자동으로 듣기 시작
+          startListeningHandsFree((transcript) => {
+            if (!activeQuizRef.current) return;
+            setUserTypedAnswer(transcript); // 화면 표시용
+            // 3. 답변 평가 진행
+            evaluateVoiceAnswer(transcript, index, quizCards);
+          });
+        });
+      };
+
+      // --- 보이스 퀴즈: 정답 채점 및 음성 피드백 ---
+      const evaluateVoiceAnswer = (userAnswer, index, quizCards) => {
+        setIsTransitioning(true);
+        const card = quizCards[index];
+        const normalize = (str) => str.replace(/[^a-zA-Z0-9가-힣ㄱ-ㅎ]/g, "").toLowerCase();
+        const correctAnswer = card.answer;
+        
+        // 모르겠어, 패스 등을 감지
+        const passWords = ["모르겠어", "몰라", "패스", "모릅니다", "다음", "통과"];
+        const isPass = passWords.some(pw => userAnswer.includes(pw)) || userAnswer === "패스";
+
+        const isCorrect = !isPass && (normalize(userAnswer) === normalize(correctAnswer) || 
+                          (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1));
+        
+        setQuizResults(prev => [...prev, {
+          question: card.question,
+          userAnswer: isPass && userAnswer === "패스" ? "(무응답/패스)" : userAnswer,
+          correctAnswer: correctAnswer,
+          isCorrect: isCorrect
+        }]);
+
+        let feedbackText = "";
+        if (isCorrect) {
+          setQuizScore(s => s + 1);
+          feedbackText = "정답입니다.";
+          showFeedback("정답입니다! 🎉");
+        } else if (isPass) {
+          feedbackText = `정답은, ${correctAnswer}, 입니다.`;
+          showFeedback("정답: " + correctAnswer);
+        } else {
+          feedbackText = `오답입니다. 정답은, ${correctAnswer}, 입니다.`;
+          showFeedback("오답입니다.");
+        }
+        
+        // 4. 채점 결과를 음성으로 피드백합니다.
+        speakText(feedbackText, () => {
+          if (!activeQuizRef.current) return;
+          setIsTransitioning(false);
+          setUserTypedAnswer("");
+          
+          // 5. 다음 문제로 자동 이동
+          if (index < quizCards.length - 1) {
+            setCurrentCardIndex(index + 1);
+            runVoiceTurn(index + 1, quizCards);
+          } else {
+            setView('result');
+            speakText("수고하셨습니다. 퀴즈가 종료되었습니다.");
+          }
+        });
       };
 
       // --- 엑셀 파일 로드 ---
@@ -326,8 +448,8 @@
         setTimeout(() => setFeedback(null), 3000);
       };
 
-      // --- 정답 체크 로직 (에러 완벽 방어) ---
-      const checkAnswer = (userAnswer) => {
+      // --- 타이핑 모드 전용 정답 체크 ---
+      const checkTypingAnswer = (userAnswer) => {
         if (isTransitioning) return; 
         const currentCard = cards[currentCardIndex];
         if (!currentCard) return; 
@@ -359,7 +481,6 @@
         setTimeout(() => {
           if (currentCardIndex < cards.length - 1) {
             setCurrentCardIndex(i => i + 1);
-            setIsFlipped(false);
           } else {
             setView('result');
           }
@@ -367,6 +488,7 @@
         }, 1500);
       };
 
+      // --- 퀴즈 시작 ---
       const startQuiz = (type) => {
         if (cards.length === 0) {
           showFeedback("문제가 없습니다.");
@@ -385,7 +507,15 @@
         setQuizScore(0);
         setQuizResults([]);
         setIsTransitioning(false);
+        setUserTypedAnswer("");
         setView('quiz');
+
+        activeQuizRef.current = true; // 퀴즈 활성화
+
+        if (type === 'voice') {
+          // 보이스 모드일 경우 약간의 대기 후 첫 번째 문제 자동 루프 시작
+          setTimeout(() => runVoiceTurn(0, shuffledCards), 500);
+        }
       };
 
       const Header = () => (
@@ -413,7 +543,7 @@
           {isLoading && <LoadingOverlay />}
           
           {feedback && (
-            <div className="fixed top-16 left-1/2 transform -translate-x-1/2 bg-slate-800/95 text-white px-5 py-2.5 rounded-xl shadow-xl z-50 animate-in text-xs font-medium backdrop-blur-sm whitespace-nowrap">
+            <div className="fixed top-16 left-1/2 transform -translate-x-1/2 bg-slate-800/95 text-white px-5 py-2.5 rounded-xl shadow-xl z-50 animate-in text-xs font-medium backdrop-blur-sm whitespace-nowrap z-50">
               {feedback}
             </div>
           )}
@@ -571,30 +701,34 @@
 
                 <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-50 mb-6 min-h-[200px] flex flex-col items-center justify-center text-center relative">
                   <div className="text-[9px] text-slate-300 font-black mb-3 tracking-[0.2em] uppercase">{cards[currentCardIndex]?.category}</div>
-                  <h3 className={`font-bold text-slate-800 leading-snug ${cards[currentCardIndex]?.question.length > 60 ? 'text-base' : 'text-lg'}`}>{cards[currentCardIndex]?.question}</h3>
+                  <h3 className={`font-bold text-slate-800 leading-snug ${cards[currentCardIndex]?.question.length > 60 ? 'text-base' : 'text-lg'}`}>
+                    {cards[currentCardIndex]?.question}
+                  </h3>
                 </div>
 
                 {quizType === 'voice' ? (
                   <div className="space-y-4">
-                    <button 
-                      onClick={startListening}
-                      disabled={isTransitioning}
-                      className={`w-full py-10 rounded-[2.5rem] flex flex-col items-center justify-center transition-all duration-500 ${isListening ? 'bg-rose-50 text-rose-600 ring-4 ring-rose-100 border-2 border-rose-200' : 'bg-slate-900 text-white shadow-xl active:scale-95'} disabled:opacity-75`}
-                    >
+                    {/* 보이스 모드에서는 터치 없이 동작하므로 버튼 클릭을 막아둡니다. */}
+                    <div className={`w-full py-10 rounded-[2.5rem] flex flex-col items-center justify-center transition-all duration-500 ${isListening ? 'bg-rose-50 text-rose-600 ring-4 ring-rose-100 border-2 border-rose-200' : 'bg-slate-900 text-white shadow-xl'}`}>
                       {isListening ? (
                         <div className="flex flex-col items-center">
                           <div className="flex gap-1.5 mb-3">
                             {[0, 0.2, 0.4].map(d => <div key={d} className="w-2 h-2 bg-rose-500 rounded-full animate-bounce" style={{animationDelay: `${d}s`}}></div>)}
                           </div>
-                          <div className="font-black text-xs tracking-widest uppercase">Listening...</div>
+                          <div className="font-black text-xs tracking-widest text-center px-4 leading-relaxed">
+                            듣고 있습니다...<br/>
+                            <span className="text-[10px] text-rose-400 font-bold">정답을 말하거나 "모르겠어"라고 하세요</span>
+                          </div>
                         </div>
                       ) : (
                         <div className="flex flex-col items-center">
-                          <Icon name="Mic" className="mb-3" size={40} />
-                          <span className="font-black text-sm tracking-widest uppercase">{isTransitioning ? 'Wait...' : 'Speak Now'}</span>
+                          <Icon name="Mic" className="mb-3 text-indigo-400" size={40} />
+                          <span className="font-black text-sm tracking-widest uppercase text-center px-4">
+                            {isTransitioning ? '문제 채점 및 읽는 중...' : '자동 진행 중 (Hands-Free)'}
+                          </span>
                         </div>
                       )}
-                    </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="animate-in slide-in-from-bottom-2">
@@ -602,12 +736,12 @@
                       <input 
                         type="text" autoFocus value={userTypedAnswer}
                         onChange={(e) => setUserTypedAnswer(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && checkAnswer(userTypedAnswer)}
+                        onKeyDown={(e) => e.key === 'Enter' && checkTypingAnswer(userTypedAnswer)}
                         placeholder="Type answer here..."
                         disabled={isTransitioning}
                         className="w-full py-6 px-7 rounded-[2rem] border-2 border-slate-100 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50 outline-none shadow-sm transition-all text-base font-bold text-slate-800 placeholder:text-slate-200 disabled:opacity-50"
                       />
-                      <button onClick={() => checkAnswer(userTypedAnswer)} disabled={isTransitioning} className="absolute right-3 top-3 bottom-3 aspect-square bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all disabled:opacity-50 disabled:active:scale-100">
+                      <button onClick={() => checkTypingAnswer(userTypedAnswer)} disabled={isTransitioning} className="absolute right-3 top-3 bottom-3 aspect-square bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all disabled:opacity-50 disabled:active:scale-100">
                         <Icon name="Send" size={20} />
                       </button>
                     </div>
