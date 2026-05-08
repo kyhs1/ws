@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>야간자율학습 출석체크</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;900&display=swap');
+        body { font-family: 'Pretendard', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @media print { .print\:hidden { display: none !important; } }
+        /* 터치 대상 크기 확보 */
+        button { min-height: 44px; min-width: 44px; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        // --- Firebase SDK Imports ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInWithPopup, 
+            GoogleAuthProvider, 
+            onAuthStateChanged,
+            signOut 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            setDoc, 
+            onSnapshot, 
+            collection, 
+            getDoc 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const { useState, useEffect, useMemo } = React;
+
+        // ==========================================
+        // 선생님의 Firebase 프로젝트 설정 (kynsc-c9da3)
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyDnWUI3NFq7tt25AeOdE5TBmF_M_K-Am2k",
+            authDomain: "kynsc-c9da3.firebaseapp.com",
+            projectId: "kynsc-c9da3",
+            storageBucket: "kynsc-c9da3.firebasestorage.app",
+            messagingSenderId: "888406074118",
+            appId: "1:888406074118:web:9b2dc01b7ec710c75c3487"
+        };
+
+        const isConfigValid = firebaseConfig.apiKey && firebaseConfig.apiKey !== "";
+
+        // Firebase 초기화
+        let auth, db, provider;
+        const APP_ID = "night-study-v1"; 
+        if (isConfigValid) {
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            provider = new GoogleAuthProvider();
+        }
+
+        // --- 설정 데이터 ---
+        const SPREADSHEET_ID = '1k4wVqJFiohyxxOOdjRmfsTz9lSCX7w-kMYSSub0U3L0';
+        const CLASSES = ['1-2', '1-3', '1-4', '1-5', '1-6'];
+        const DAYS = ['월', '화', '수', '목'];
+        const PERIODS = [8, 9, 10];
+
+        // --- Lucide Icon Component (Fix for toSvg error) ---
+        const Icon = ({ name, size = 20, className = "", color = "currentColor", strokeWidth = 2, fill = "none" }) => {
+            const iconData = lucide.icons[name];
+            if (!iconData) return null;
+
+            return (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width={size}
+                    height={size}
+                    viewBox="0 0 24 24"
+                    fill={fill}
+                    stroke={color}
+                    strokeWidth={strokeWidth}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`lucide lucide-${name.toLowerCase()} ${className}`}
+                >
+                    {iconData.map(([tag, attrs], index) => {
+                        const TagName = tag;
+                        return <TagName key={index} {...attrs} />;
+                    })}
+                </svg>
+            );
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [viewMode, setViewMode] = useState('current');
+            const [selectedClass, setSelectedClass] = useState('1-2');
+            const [selectedDay, setSelectedDay] = useState('월');
+            const [attendance, setAttendance] = useState({});
+            const [historyData, setHistoryData] = useState({});
+            const [students, setStudents] = useState([]); 
+            const [isLoading, setIsLoading] = useState(true);
+            const [modalTarget, setModalTarget] = useState(null);
+            const [showReport, setShowReport] = useState(false);
+            const [reportAttendance, setReportAttendance] = useState({});
+            const [selectedReportWeek, setSelectedReportWeek] = useState(null);
+            const [isReportLoading, setIsReportLoading] = useState(false);
+            const [realTime, setRealTime] = useState(new Date());
+
+            // --- 주차 관리 ---
+            const getWeekIdentifier = (date) => {
+                const d = new Date(date);
+                d.setHours(0, 0, 0, 0);
+                d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+                return `${d.getFullYear()}-W${Math.ceil((((d - new Date(d.getFullYear(), 0, 1)) / 86400000) + 1) / 7)}`;
+            };
+
+            const getWeekLabel = (date) => {
+                const d = new Date(date);
+                const month = d.getMonth() + 1;
+                const firstDayOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+                const weekOfMonth = Math.ceil((d.getDate() + firstDayOfMonth.getDay()) / 7);
+                return `${month}월 ${weekOfMonth}주차`;
+            };
+
+            const weekOptions = useMemo(() => {
+                const options = [];
+                const now = new Date();
+                for (let i = 0; i < 5; i++) {
+                    const d = new Date(now);
+                    d.setDate(now.getDate() - (i * 7));
+                    options.push({
+                        id: getWeekIdentifier(d),
+                        label: getWeekLabel(d) + (i === 0 ? ' (이번 주)' : i === 1 ? ' (지난주)' : '')
+                    });
+                }
+                return options;
+            }, []);
+
+            // --- 로그인 기능 ---
+            const handleLogin = async () => {
+                try {
+                    await signInWithPopup(auth, provider);
+                } catch (error) { console.error("Login Error:", error); }
+            };
+
+            const handleLogout = () => {
+                if(confirm("로그아웃 하시겠습니까?")) signOut(auth);
+            };
+
+            useEffect(() => {
+                const timer = setInterval(() => setRealTime(new Date()), 1000 * 60);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                if (!auth) return;
+                const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+                return () => unsubscribe();
+            }, []);
+
+            // --- 데이터 연동 ---
+            const fetchSheetData = async (className) => {
+                setIsLoading(true);
+                try {
+                    const sheetName = encodeURIComponent(`출석부(${className})`);
+                    const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}&range=A:P`;
+                    const response = await fetch(url);
+                    const csvText = await response.text();
+                    const rows = csvText.split(/\r?\n/).map(row => row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/^"(.*)"$/, '$1').trim()));
+                    const parsedStudents = rows.map((row) => {
+                        const isTrue = (val) => val && (val.toUpperCase().trim() === 'TRUE' || val === '1' || val === 'T');
+                        const name = row[1];
+                        const studentId = row[0];
+                        if (!name || name === "성명" || studentId === "학번") return null;
+                        return {
+                            studentId, name, gender: row[2], class: className, isHelper: row[15]?.includes('도우미'),
+                            schedule: {
+                                '월': { 8: isTrue(row[3]), 9: isTrue(row[4]), 10: isTrue(row[5]) },   
+                                '화': { 8: isTrue(row[6]), 9: isTrue(row[7]), 10: isTrue(row[8]) },   
+                                '수': { 8: isTrue(row[9]), 9: isTrue(row[10]), 10: isTrue(row[11]) }, 
+                                '목': { 8: isTrue(row[12]), 9: isTrue(row[13]), 10: isTrue(row[14]) },
+                            }
+                        };
+                    }).filter(s => s !== null);
+                    setStudents(parsedStudents);
+                } catch (error) { console.error(error); } finally { setIsLoading(false); }
+            };
+
+            useEffect(() => { if(user) fetchSheetData(selectedClass); }, [selectedClass, user]);
+
+            useEffect(() => {
+                const today = new Date().getDay();
+                const dayMap = { 1: '월', 2: '화', 3: '수', 4: '목' };
+                if (dayMap[today]) setSelectedDay(dayMap[today]);
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                const weekId = getWeekIdentifier(new Date());
+                const lastWeekId = getWeekIdentifier(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+                const collPath = collection(db, 'artifacts', APP_ID, 'public', 'data', 'attendance');
+                const unsubCurrent = onSnapshot(doc(collPath, weekId), (s) => s.exists() && setAttendance(s.data()));
+                const unsubHistory = onSnapshot(doc(collPath, lastWeekId), (s) => s.exists() && setHistoryData(s.data()));
+                return () => { unsubCurrent(); unsubHistory(); };
+            }, [user]);
+
+            useEffect(() => {
+                const fetchReportData = async () => {
+                    if (!user || !showReport || !selectedReportWeek) return;
+                    setIsReportLoading(true);
+                    try {
+                        const docRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'attendance', selectedReportWeek);
+                        const docSnap = await getDoc(docRef);
+                        setReportAttendance(docSnap.exists() ? docSnap.data() : {});
+                    } catch (e) { console.error(e); } finally { setIsReportLoading(false); }
+                };
+                fetchReportData();
+            }, [user, showReport, selectedReportWeek]);
+
+            const dashboardDate = useMemo(() => {
+                const now = new Date();
+                const dayMap = { '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6, '일': 0 };
+                const targetDayIndex = dayMap[selectedDay];
+                const currentDayIndex = now.getDay();
+                let diff = targetDayIndex - currentDayIndex;
+                if (viewMode === 'history') diff -= 7;
+                const targetDate = new Date(now);
+                targetDate.setDate(now.getDate() + diff);
+                return targetDate.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' });
+            }, [selectedDay, viewMode]);
+
+            const footerDateString = useMemo(() => {
+                return realTime.toLocaleString('ko-KR', { month: 'long', day: 'numeric', weekday: 'long', hour: 'numeric', minute: 'numeric', hour12: false });
+            }, [realTime]);
+
+            const saveData = async (data) => {
+                if(!user) return;
+                setAttendance(data);
+                try {
+                    await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'attendance', getWeekIdentifier(new Date())), data);
+                } catch (e) { console.error(e); }
+            };
+
+            const toggleAttendance = (sId, period) => {
+                if (viewMode === 'history') return;
+                const key = `${sId}-${period}-${selectedDay}`;
+                const next = { ...attendance, [key]: !attendance[key] };
+                saveData(next);
+            };
+
+            const setEarlyLeave = (sId, startPeriod) => {
+                const key = `${sId}-leaveFrom-${selectedDay}`;
+                const next = { ...attendance, [key]: startPeriod };
+                saveData(next);
+                setModalTarget(null);
+            };
+
+            const periodStats = useMemo(() => {
+                const stats = { 8: 0, 9: 0, 10: 0 };
+                students.forEach(s => PERIODS.forEach(p => { if (s.schedule[selectedDay][p]) stats[p]++; }));
+                return stats;
+            }, [students, selectedDay]);
+
+            const exportToCSV = () => {
+                const weekLabel = weekOptions.find(w => w.id === selectedReportWeek)?.label || "데이터";
+                const header = ["학번", "성명", "요일", "8교시", "9교시", "10교시", "조퇴여부"];
+                const rows = students.flatMap(s => 
+                    DAYS.filter(d => s.schedule[d][8] || s.schedule[d][9] || s.schedule[d][10]).map(d => {
+                        const leave = reportAttendance[`${s.studentId}-leaveFrom-${d}`];
+                        return [
+                            s.studentId, s.name, d,
+                            reportAttendance[`${s.studentId}-8-${d}`] ? "출석" : "결석",
+                            reportAttendance[`${s.studentId}-9-${d}`] ? "출석" : "결석",
+                            reportAttendance[`${s.studentId}-10-${d}`] ? "출석" : "결석",
+                            leave ? `${leave}교시 조퇴` : "-"
+                        ];
+                    })
+                );
+                const csvContent = "\uFEFF" + [header, ...rows].map(e => e.join(",")).join("\n");
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = `${selectedClass}반_${weekLabel.replace(/ /g, '_')}.csv`;
+                link.click();
+            };
+
+            // --- 로그인 화면 ---
+            if (!user) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+                        <div className="max-w-sm w-full bg-white rounded-[2.5rem] p-8 shadow-xl text-center space-y-8 border border-slate-100">
+                            <div className="w-20 h-20 bg-indigo-600 text-white rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-indigo-100">
+                                <Icon name="CheckCircle2" size={40} />
+                            </div>
+                            <div className="space-y-2">
+                                <h1 className="text-2xl font-black text-slate-900 tracking-tight">야간자율학습 출석부</h1>
+                                <p className="text-slate-500 text-sm font-medium">선생님 계정으로 로그인해 주세요.</p>
+                            </div>
+                            <button 
+                                onClick={handleLogin}
+                                className="w-full bg-white border border-slate-200 py-4 rounded-2xl flex items-center justify-center gap-3 font-bold hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
+                            >
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                                구글 계정으로 시작하기
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen pb-24 overflow-x-hidden">
+                    <header className="bg-white border-b sticky top-0 z-30 shadow-sm print:hidden">
+                        <div className="px-3 py-2 flex items-center justify-between gap-2">
+                            <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                                {DAYS.map(day => (
+                                    <button key={day} onClick={() => setSelectedDay(day)} className={`w-8 h-8 flex items-center justify-center text-sm font-bold rounded-md transition-all ${selectedDay === day ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>{day}</button>
+                                ))}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
+                                    <Icon name="LogOut" size={18} />
+                                </button>
+                                <div className="flex bg-slate-200/50 p-0.5 rounded-lg shrink-0">
+                                    <button onClick={() => setViewMode('current')} className={`px-3 py-1.5 text-[11px] font-bold rounded-md transition-all ${viewMode === 'current' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>이번 주</button>
+                                    <button onClick={() => setViewMode('history')} className={`px-3 py-1.5 text-[11px] font-bold rounded-md transition-all ${viewMode === 'history' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500'}`}>지난주</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="px-3 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar items-center pt-1 border-t border-slate-50/50">
+                            <button onClick={() => fetchSheetData(selectedClass)} className={`p-2 rounded-lg transition-all ${isLoading ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400 active:rotate-180'}`}>
+                                <Icon name="RefreshCw" size={14} className={isLoading ? 'animate-spin' : ""} />
+                            </button>
+                            {CLASSES.map(cls => (
+                                <button key={cls} onClick={() => setSelectedClass(cls)} className={`flex-none px-4 py-1.5 rounded-xl text-xs font-bold border transition-all ${selectedClass === cls ? 'bg-slate-800 border-slate-800 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500'}`}>{cls}</button>
+                            ))}
+                        </div>
+                    </header>
+
+                    <main className="p-4 max-w-md mx-auto print:p-0 print:max-w-none">
+                        <div className={`rounded-3xl p-3.5 mb-4 text-white shadow-xl transition-all duration-500 print:shadow-none print:text-black print:border print:bg-none ${viewMode === 'current' ? 'bg-gradient-to-br from-indigo-600 to-indigo-700' : 'bg-gradient-to-br from-orange-500 to-orange-600'}`}>
+                            <div className="flex flex-col gap-2.5">
+                                <div className="flex justify-between items-center px-1">
+                                    <div className="flex items-center gap-2">
+                                        <Icon name="Sparkles" size={18} className="text-yellow-300" fill="currentColor" />
+                                        <h2 className="text-xl font-black tracking-tight leading-tight">{dashboardDate}</h2>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-white/80 font-bold text-[11px] uppercase tracking-wider print:text-black">
+                                        {selectedClass}반 현황 <Icon name="TrendingUp" size={14} className="opacity-60" />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {PERIODS.map(p => (
+                                        <div key={p} className="bg-white/10 rounded-2xl p-2 px-3 border border-white/5 backdrop-blur-sm flex items-center justify-between print:border-black print:text-black">
+                                            <span className="text-base font-bold opacity-80 leading-none">{p}교시</span>
+                                            <span className="text-lg font-black tracking-tighter leading-none">{students.filter(s => attendance[`${s.studentId}-${p}-${selectedDay}`] || (attendance[`${s.studentId}-leaveFrom-${selectedDay}`] && p >= attendance[`${s.studentId}-leaveFrom-${selectedDay}`])).length}<span className="text-[10px] font-medium opacity-60 ml-0.5">명</span></span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {isLoading ? (
+                            <div className="py-20 text-center"><Icon name="RefreshCw" size={40} className="animate-spin mx-auto text-indigo-400 mb-4" /><p className="text-slate-400 font-bold animate-pulse">명단 분석 중...</p></div>
+                        ) : (
+                            <div className="space-y-2.5">
+                                {students.filter(s => s.schedule[selectedDay][8] || s.schedule[selectedDay][9] || s.schedule[selectedDay][10]).map(student => {
+                                    const data = viewMode === 'current' ? attendance : historyData;
+                                    const leaveFrom = data[`${student.studentId}-leaveFrom-${selectedDay}`];
+                                    const isFemale = student.gender === '여' || student.gender === '여성';
+                                    const isMale = student.gender === '남' || student.gender === '남성';
+                                    return (
+                                        <div key={student.studentId} className="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between transition-all print:shadow-none print:border-b print:rounded-none">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-base transition-all duration-300 print:border ${leaveFrom ? 'bg-orange-100 text-orange-600 ring-4 ring-orange-500/20' : isFemale ? 'bg-pink-100 text-pink-600' : isMale ? 'bg-blue-100 text-blue-600' : 'bg-indigo-50 text-indigo-600'}`}><Icon name="User" size={22} strokeWidth={2.5} /></div>
+                                                <div>
+                                                    <div className="flex items-center gap-1.5 flex-wrap"><h3 className="font-bold text-slate-900 text-base tracking-tight leading-none">{student.name}</h3>{leaveFrom && <span className="px-1.5 py-0.5 bg-orange-500 text-[8px] text-white rounded-lg font-black shadow-sm">조퇴:{leaveFrom}교시</span>}</div>
+                                                    <div className="flex items-center gap-2 mt-1"><p className="text-base text-slate-600 font-bold tracking-tight leading-none">{student.studentId}</p>{student.isHelper && <span className="px-1 py-0.5 bg-yellow-400 text-[9px] text-yellow-950 rounded-md font-black shadow-sm flex items-center gap-0.5"><Icon name="Star" size={8} fill="currentColor"/> 도우미</span>}</div>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-1 print:hidden">
+                                                {PERIODS.map(p => {
+                                                    const isApplied = student.schedule[selectedDay][p];
+                                                    const isChk = data[`${student.studentId}-${p}-${selectedDay}`];
+                                                    const isEarlyLeavePeriod = leaveFrom && p >= leaveFrom;
+                                                    return (
+                                                        <button key={p} disabled={!isApplied || viewMode === 'history'} onClick={() => toggleAttendance(student.studentId, p)} className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center transition-all ${!isApplied ? 'bg-slate-50 text-slate-100 border border-slate-100 opacity-10' : isEarlyLeavePeriod ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : isChk ? 'bg-green-500 text-white shadow-md' : 'bg-slate-100 text-slate-400 active:scale-90 border border-slate-200/50'}`}>
+                                                            <span className="text-[8px] font-black mb-0.5">{p}</span>{isChk || isEarlyLeavePeriod ? <Icon name="CheckCircle2" size={14} /> : <div className={`w-3 h-3 rounded-full border-2 ${isApplied ? 'border-current/20' : 'border-transparent'}`} />}
+                                                        </button>
+                                                    );
+                                                })}
+                                                <button disabled={viewMode === 'history'} onClick={() => setModalTarget(student)} className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center transition-all ml-1 border ${leaveFrom ? 'bg-orange-100 text-orange-600 border-orange-200' : 'bg-orange-50 text-orange-400 border-orange-100 active:scale-90'}`}><span className="text-[8px] font-black mb-0.5">조퇴</span><Icon name="LogOut" size={14} /></button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </main>
+
+                    {/* 조퇴 모달 */}
+                    {modalTarget && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/70 backdrop-blur-md">
+                            <div className="bg-white w-full max-w-xs rounded-[2.5rem] p-7 shadow-2xl">
+                                <div className="flex justify-between items-start mb-6">
+                                    <div className="p-3 bg-orange-100 text-orange-600 rounded-2xl shadow-inner shadow-orange-200/50"><Icon name="LogOut" size={28} /></div>
+                                    <button onClick={() => setModalTarget(null)} className="p-2 text-slate-400 hover:text-slate-600 active:bg-slate-100 rounded-full transition-all"><Icon name="X" size={28} /></button>
+                                </div>
+                                <div className="mb-8">
+                                    <div className="flex items-baseline gap-2 mb-2"><h4 className="text-2xl font-black text-slate-800 tracking-tight">{modalTarget.name}</h4><span className="text-sm font-bold text-slate-400">{modalTarget.class}반</span></div>
+                                    <p className="text-slate-500 text-sm font-medium leading-relaxed">오늘 몇 교시부터 조퇴했나요?</p>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2.5">
+                                    {PERIODS.map(p => (
+                                        <button key={p} onClick={() => setEarlyLeave(modalTarget.studentId, p)} className="flex items-center justify-between px-5 py-4 bg-slate-50 hover:bg-orange-50 border border-slate-100 hover:border-orange-200 rounded-2xl transition-all group"><span className="font-bold text-slate-700 group-hover:text-orange-600">{p}교시부터 조퇴</span><Icon name="CheckCircle2" size={18} className="text-slate-200 group-hover:text-orange-400" /></button>
+                                    ))}
+                                    {attendance[`${modalTarget.studentId}-leaveFrom-${selectedDay}`] && (
+                                        <button onClick={() => setEarlyLeave(modalTarget.studentId, null)} className="mt-2 flex items-center justify-center gap-2 py-4 bg-red-50 text-red-500 border border-red-100 rounded-2xl font-black text-xs transition-all"><Icon name="Trash2" size={14} />조퇴 기록 삭제</button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 리포트 모달 */}
+                    {showReport && (
+                        <div className="fixed inset-0 z-[60] bg-white flex flex-col p-4 overflow-y-auto">
+                            <div className="flex justify-between items-center mb-6">
+                                <div className="flex flex-col"><h2 className="text-2xl font-black tracking-tight">{selectedClass}반 주간 출석 리포트</h2><p className="text-xs text-slate-400 font-bold">주차별 데이터를 선택하여 조회하세요.</p></div>
+                                <button onClick={() => { setShowReport(false); setSelectedReportWeek(null); }} className="p-2 bg-slate-100 rounded-full"><Icon name="X" size={24} /></button>
+                            </div>
+                            <div className="flex flex-wrap gap-2 mb-6">
+                                {weekOptions.map(week => (
+                                    <button key={week.id} onClick={() => setSelectedReportWeek(week.id)} className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-all ${selectedReportWeek === week.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>{week.label}</button>
+                                ))}
+                            </div>
+                            <div className="flex gap-2 mb-6 print:hidden">
+                                <button onClick={exportToCSV} className="flex-1 bg-green-600 text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all"><Icon name="FileDown" size={20} />CSV 저장</button>
+                                <button onClick={() => window.print()} className="flex-1 bg-slate-800 text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all"><Icon name="Printer" size={20} />인쇄</button>
+                            </div>
+                            {isReportLoading ? (
+                                <div className="py-20 text-center"><Icon name="RefreshCw" size={40} className="animate-spin mx-auto text-indigo-400 mb-4" /><p className="text-slate-400 font-bold animate-pulse">데이터 로딩 중...</p></div>
+                            ) : (
+                                <div className="border rounded-2xl overflow-x-auto shadow-sm bg-white">
+                                    <table className="w-full text-left text-xs border-collapse min-w-[800px]">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b">
+                                                <th className="p-3 font-bold border-r sticky left-0 bg-slate-50 z-10 w-24">성명 / 학번</th>
+                                                {DAYS.map(d => <th key={d} className="p-3 font-bold border-r text-center bg-slate-100/50" colSpan={3}>{d}요일</th>)}
+                                            </tr>
+                                            <tr className="bg-slate-50 border-b"><th className="p-2 border-r sticky left-0 bg-slate-50 z-10"></th>{DAYS.map(d => [8,9,10].map(p => <th key={`${d}-${p}`} className="p-1 text-[9px] text-center border-r font-black text-slate-400">{p}</th>))}</tr>
+                                        </thead>
+                                        <tbody>
+                                            {students.map(s => (
+                                                <tr key={s.studentId} className="border-b hover:bg-slate-50 transition-colors">
+                                                    <td className="p-2 border-r sticky left-0 bg-white z-10"><div className="font-bold text-slate-800">{s.name}</div><div className="text-[10px] text-slate-400 font-medium">{s.studentId}</div></td>
+                                                    {DAYS.map(d => [8,9,10].map(p => {
+                                                        const isAt = reportAttendance[`${s.studentId}-${p}-${d}`];
+                                                        const leave = reportAttendance[`${s.studentId}-leaveFrom-${d}`];
+                                                        const isEarly = leave && p >= leave;
+                                                        return (
+                                                            <td key={`${s.studentId}-${d}-${p}`} className="p-1 text-center border-r">
+                                                                {isAt || isEarly ? (
+                                                                    <div className="flex flex-col items-center">
+                                                                        <div className={`w-2.5 h-2.5 rounded-full ${isEarly ? 'bg-orange-500' : 'bg-green-500'}`}></div>
+                                                                        {isEarly && <span className="text-[8px] text-orange-500 font-bold mt-0.5">조퇴</span>}
+                                                                    </div>
+                                                                ) : <div className="w-2.5 h-2.5 rounded-full border border-slate-200 mx-auto opacity-30"></div>}
+                                                            </td>
+                                                        );
+                                                    }))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                            <p className="mt-4 text-[10px] text-slate-400 italic font-bold">* ● 녹색: 출석 / ● 주황색: 조퇴 / ○ 비어있음: 결석 혹은 신청안함</p>
+                        </div>
+                    )}
+
+                    <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t py-4 px-6 flex justify-between items-center shadow-[0_-10px_25px_rgba(0,0,0,0.05)] z-40 print:hidden">
+                        <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-2.5 text-slate-700">
+                                <Icon name="Calendar" size={18} className="text-indigo-600" />
+                                <span className="font-black text-xs tracking-tighter">{footerDateString}</span>
+                            </div>
+                            <button onClick={() => setShowReport(true)} className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 hover:underline"><Icon name="Table" size={10} /> 데이터 내보내기/인쇄</button>
+                        </div>
+                        <div className={`flex items-center gap-1.5 text-[10px] font-black px-3.5 py-1.5 rounded-full shadow-sm ${viewMode === 'current' ? 'bg-green-50 text-green-700' : 'bg-orange-50 text-orange-700'}`}>
+                            <Icon name="Save" size={12} /> {viewMode === 'current' ? 'AUTO SYNC' : 'HISTORY'}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
