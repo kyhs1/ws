@@ -163,6 +163,23 @@
         }
       };
 
+      // --- 플래시 카드 암기 시작 로직 (매번 랜덤 섞기) ---
+      const startStudy = () => {
+        if (cards.length === 0) {
+          showFeedback("문제가 없습니다.");
+          return;
+        }
+        const shuffledCards = [...cards];
+        for (let i = shuffledCards.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledCards[i], shuffledCards[j]] = [shuffledCards[j], shuffledCards[i]];
+        }
+        setCards(shuffledCards);
+        setCurrentCardIndex(0);
+        setIsFlipped(false);
+        setView('study');
+      };
+
       // --- 음성 인식 (STT) ---
       const startListening = () => {
         if (isTransitioning) return; 
@@ -355,6 +372,14 @@
           showFeedback("문제가 없습니다.");
           return;
         }
+
+        const shuffledCards = [...cards];
+        for (let i = shuffledCards.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledCards[i], shuffledCards[j]] = [shuffledCards[j], shuffledCards[i]];
+        }
+        setCards(shuffledCards);
+
         setQuizType(type);
         setCurrentCardIndex(0);
         setQuizScore(0);
@@ -458,7 +483,7 @@
 
                 <div className="space-y-3">
                   <button 
-                    onClick={() => {setView('study'); setCurrentCardIndex(0); setIsFlipped(false);}}
+                    onClick={startStudy}
                     className="w-full flex items-center p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-indigo-100 transition-all active:scale-[0.98]"
                   >
                     <div className="bg-indigo-50 p-2.5 rounded-xl mr-4 text-indigo-600"><Icon name="BookOpen" size={22} /></div>
