@@ -77,6 +77,7 @@
           let actualName = name;
           if (name === 'CheckCircle2' && !lucide.icons['CheckCircle2']) actualName = 'CircleCheck';
           if (name === 'AlertCircle' && !lucide.icons['AlertCircle']) actualName = 'CircleAlert';
+          if (name === 'ListChecks' && !lucide.icons['ListChecks']) actualName = 'ListTodo';
           
           const iconData = lucide.icons[actualName] || lucide.icons.Circle;
           
@@ -105,6 +106,10 @@
       const [quizResults, setQuizResults] = useState([]); 
       const [quizType, setQuizType] = useState(null); 
       const [userTypedAnswer, setUserTypedAnswer] = useState("");
+      
+      // 객관식 퀴즈용 보기 리스트 상태
+      const [multipleChoiceOptions, setMultipleChoiceOptions] = useState([]);
+
       const [importText, setImportText] = useState("");
       const [importSubjectName, setImportSubjectName] = useState(""); 
       const [feedback, setFeedback] = useState(null);
@@ -329,7 +334,7 @@
           showFeedback("정답: " + correctAnswer);
         } else {
           feedbackText = `오답입니다. 정답은, ${correctAnswer}, 입니다.`;
-          showFeedback("오답입니다.");
+          showFeedback(`오답입니다. 정답: ${correctAnswer}`);
         }
         
         speakText(feedbackText, () => {
@@ -345,6 +350,97 @@
             speakText("수고하셨습니다. 퀴즈가 종료되었습니다.");
           }
         });
+      };
+
+      // --- 4지선다 객관식 오답 보기 자동 생성 함수 ---
+      const generateOptions = (correctAnswer, allCards) => {
+        let uniqueAnswers = Array.from(new Set(allCards.map(c => c.answer)));
+        let pool = uniqueAnswers.filter(a => a !== correctAnswer);
+        
+        // 데이터가 적을 때 임의의 오답 채워넣기
+        while (pool.length < 3) {
+          pool.push("관련 없는 임의의 내용 " + Math.random().toString(36).substr(2, 5));
+        }
+        
+        let distractors = pool.sort(() => 0.5 - Math.random()).slice(0, 3);
+        return [correctAnswer, ...distractors].sort(() => 0.5 - Math.random());
+      };
+
+      // --- 객관식 정답 체크 로직 ---
+      const checkMultipleChoiceAnswer = (selectedOption) => {
+        if (isTransitioning) return; 
+        const currentCard = cards[currentCardIndex];
+        if (!currentCard) return; 
+
+        setIsTransitioning(true); 
+
+        const correctAnswer = currentCard.answer;
+        const isCorrect = selectedOption === correctAnswer;
+        
+        setQuizResults(prev => [...prev, {
+          question: getFullQuestion(currentCard),
+          userAnswer: selectedOption,
+          correctAnswer: correctAnswer,
+          isCorrect: isCorrect
+        }]);
+
+        if (isCorrect) {
+          setQuizScore(s => s + 1);
+          showFeedback("정답입니다! 🎉");
+        } else {
+          showFeedback(`오답입니다. 정답: ${correctAnswer}`);
+        }
+        
+        const delay = isCorrect ? 1500 : 2500;
+        setTimeout(() => {
+          if (currentCardIndex < cards.length - 1) {
+            setCurrentCardIndex(i => i + 1);
+            setMultipleChoiceOptions(generateOptions(cards[currentCardIndex + 1].answer, cards));
+          } else {
+            setView('result');
+          }
+          setIsTransitioning(false); 
+        }, delay);
+      };
+
+      const checkTypingAnswer = (userAnswer) => {
+        if (isTransitioning) return; 
+        const currentCard = cards[currentCardIndex];
+        if (!currentCard) return; 
+
+        setIsTransitioning(true); 
+
+        const normalize = (str) => str.replace(/[^a-zA-Z0-9가-힣ㄱ-ㅎ]/g, "").toLowerCase();
+        const correctAnswer = currentCard.answer;
+        
+        const isCorrect = normalize(userAnswer) === normalize(correctAnswer) || 
+                          (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1);
+        
+        setQuizResults(prev => [...prev, {
+          question: getFullQuestion(currentCard),
+          userAnswer: userAnswer,
+          correctAnswer: correctAnswer,
+          isCorrect: isCorrect
+        }]);
+
+        if (isCorrect) {
+          setQuizScore(s => s + 1);
+          showFeedback("정답입니다! 🎉");
+        } else {
+          showFeedback(`오답입니다. 정답: ${correctAnswer}`);
+        }
+        
+        setUserTypedAnswer("");
+        
+        const delay = isCorrect ? 1500 : 2500;
+        setTimeout(() => {
+          if (currentCardIndex < cards.length - 1) {
+            setCurrentCardIndex(i => i + 1);
+          } else {
+            setView('result');
+          }
+          setIsTransitioning(false); 
+        }, delay);
       };
 
       const handleFileUpload = (e) => {
@@ -456,58 +552,13 @@
         setTimeout(() => setFeedback(null), 3000);
       };
 
-      const checkTypingAnswer = (userAnswer) => {
-        if (isTransitioning) return; 
-        const currentCard = cards[currentCardIndex];
-        if (!currentCard) return; 
-
-        setIsTransitioning(true); 
-
-        const normalize = (str) => str.replace(/[^a-zA-Z0-9가-힣ㄱ-ㅎ]/g, "").toLowerCase();
-        const correctAnswer = currentCard.answer;
-        
-        const isCorrect = normalize(userAnswer) === normalize(correctAnswer) || 
-                          (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1);
-        
-        setQuizResults(prev => [...prev, {
-          question: getFullQuestion(currentCard),
-          userAnswer: userAnswer,
-          correctAnswer: correctAnswer,
-          isCorrect: isCorrect
-        }]);
-
-        if (isCorrect) {
-          setQuizScore(s => s + 1);
-          showFeedback("정답입니다! 🎉");
-        } else {
-          showFeedback(`오답입니다. 정답: ${correctAnswer}`);
-        }
-        
-        setUserTypedAnswer("");
-        
-        // 정답을 확인할 시간을 주기 위해 오답일 경우 대기 시간을 2.5초로 늘립니다.
-        const delay = isCorrect ? 1500 : 2500;
-        setTimeout(() => {
-          if (currentCardIndex < cards.length - 1) {
-            setCurrentCardIndex(i => i + 1);
-          } else {
-            setView('result');
-          }
-          setIsTransitioning(false); 
-        }, delay);
-      };
-
       const startQuiz = (type) => {
         if (cards.length === 0) {
           showFeedback("문제가 없습니다.");
           return;
         }
 
-        const shuffledCards = [...cards];
-        for (let i = shuffledCards.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [shuffledCards[i], shuffledCards[j]] = [shuffledCards[j], shuffledCards[i]];
-        }
+        const shuffledCards = [...cards].sort(() => 0.5 - Math.random());
         setCards(shuffledCards);
 
         setQuizType(type);
@@ -516,8 +567,12 @@
         setQuizResults([]);
         setIsTransitioning(false);
         setUserTypedAnswer("");
-        setView('quiz');
 
+        if (type === 'multipleChoice') {
+          setMultipleChoiceOptions(generateOptions(shuffledCards[0].answer, shuffledCards));
+        }
+
+        setView('quiz');
         activeQuizRef.current = true; 
 
         if (type === 'voice') {
@@ -630,10 +685,10 @@
                   </div>
                 </div>
 
-                <div className={`grid gap-4 ${isDesktopMode ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <div className={`grid gap-4 ${isDesktopMode ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   <button 
                     onClick={startStudy}
-                    className={`flex items-center bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-indigo-200 hover:shadow-md transition-all active:scale-[0.98] ${isDesktopMode ? 'p-6 flex-col justify-center gap-4 col-span-2' : 'p-4'}`}
+                    className={`flex items-center bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-indigo-200 hover:shadow-md transition-all active:scale-[0.98] ${isDesktopMode ? 'p-6 flex-col justify-center gap-4 col-span-3' : 'p-4 col-span-2'}`}
                   >
                     <div className={`bg-indigo-50 rounded-xl text-indigo-600 flex items-center justify-center ${isDesktopMode ? 'p-5 w-20 h-20' : 'p-2.5 mr-4'}`}>
                       <Icon name="BookOpen" size={isDesktopMode ? 40 : 22} />
@@ -656,6 +711,14 @@
                     <Icon name="Keyboard" className="text-emerald-500" size={isDesktopMode ? 36 : 20} />
                     <span className={`font-black text-slate-600 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[9px]'}`}>Typing Quiz</span>
                   </button>
+
+                  <button 
+                    onClick={() => startQuiz('multipleChoice')}
+                    className={`bg-white rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-3 hover:border-blue-200 hover:bg-blue-50/30 transition-all active:scale-[0.98] ${isDesktopMode ? 'py-10' : 'py-4 col-span-2'}`}
+                  >
+                    <Icon name="ListChecks" className="text-blue-500" size={isDesktopMode ? 36 : 20} />
+                    <span className={`font-black text-slate-600 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>객관식 퀴즈 (4지선다)</span>
+                  </button>
                 </div>
                   
                 <button 
@@ -667,7 +730,7 @@
               </div>
             )}
 
-            {/* 플래시 카드 모드 (완전 수정됨: 스크롤 영역 분리) */}
+            {/* 플래시 카드 모드 */}
             {view === 'study' && (
               <div className="flex flex-col h-full flex-grow animate-in slide-in-from-bottom-2 pb-4">
                 <div className="w-full flex justify-start items-center mb-4 px-4 shrink-0">
@@ -681,13 +744,9 @@
                 >
                   {/* 카드 앞면 (문제) */}
                   <div className="absolute inset-0 bg-white backface-hidden rounded-[2.5rem] border border-slate-100 flex flex-col overflow-hidden">
-                    
-                    {/* 상단 Q 헤더 (절대 잘리지 않음) */}
                     <div className={`flex-shrink-0 pt-8 md:pt-10 px-8 md:px-12 text-left ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
                       <span className="text-slate-300 font-black">Q{currentCardIndex + 1}.</span>
                     </div>
-                    
-                    {/* 가운데 스크롤 영역 (문제가 아무리 길어도 이 안에서 스크롤됨) */}
                     <div className="flex-grow overflow-y-auto px-8 md:px-12 flex flex-col custom-scrollbar">
                       <div className={`m-auto font-bold text-slate-800 leading-relaxed whitespace-pre-wrap break-keep w-full text-center py-6 ${
                         isDesktopMode 
@@ -697,8 +756,6 @@
                         {renderQuestionContent(getFullQuestion(cards[currentCardIndex]))}
                       </div>
                     </div>
-                    
-                    {/* 하단 안내 문구 (절대 잘리지 않음) */}
                     <div className={`flex-shrink-0 pb-8 pt-2 text-center text-slate-300 font-bold tracking-widest animate-pulse ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
                       TOUCH FOR ANSWER
                     </div>
@@ -706,13 +763,9 @@
                   
                   {/* 카드 뒷면 (정답) */}
                   <div className="absolute inset-0 bg-[#1e293b] rotate-y-180 backface-hidden rounded-[2.5rem] border-2 border-indigo-500/20 shadow-inner flex flex-col overflow-hidden">
-                    
-                    {/* 상단 A 헤더 */}
                     <div className={`flex-shrink-0 pt-8 md:pt-10 px-8 md:px-12 text-left ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
                       <span className="text-indigo-400 font-black">A.</span>
                     </div>
-                    
-                    {/* 가운데 스크롤 영역 */}
                     <div className="flex-grow overflow-y-auto px-8 md:px-12 flex flex-col custom-scrollbar">
                       <div className={`m-auto font-bold text-white leading-relaxed whitespace-pre-wrap break-keep w-full text-center py-6 ${
                         isDesktopMode 
@@ -722,8 +775,6 @@
                         {cards[currentCardIndex]?.answer}
                       </div>
                     </div>
-                    
-                    {/* 하단 안내 문구 */}
                     <div className={`flex-shrink-0 pb-8 pt-2 text-center text-slate-400 font-bold tracking-widest ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
                       TOUCH FOR NEXT
                     </div>
@@ -738,10 +789,10 @@
               </div>
             )}
 
-            {/* 퀴즈 모드 (마찬가지로 겹침 현상 방지) */}
+            {/* 퀴즈 모드 */}
             {view === 'quiz' && (
-              <div className="animate-in max-w-3xl mx-auto w-full">
-                <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden">
+              <div className="animate-in max-w-3xl mx-auto w-full flex flex-col h-full flex-grow pb-4">
+                <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden flex-shrink-0">
                   <div className="absolute top-0 left-0 h-1.5 bg-emerald-400 transition-all duration-700" style={{width: `${((currentCardIndex + 1) / cards.length) * 100}%`}}></div>
                   <div className={`flex items-center gap-2 text-slate-400 font-black uppercase tracking-widest ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
                     PROGRESS: {currentCardIndex + 1} / {cards.length}
@@ -751,12 +802,12 @@
                   </div>
                 </div>
 
-                <div className={`bg-white rounded-[2rem] shadow-sm border border-slate-50 mb-8 flex flex-col items-center justify-center relative ${isDesktopMode ? 'p-10 min-h-[300px]' : 'p-6 min-h-[200px]'}`}>
-                  <div className={`w-full text-left text-slate-300 font-black mb-4 ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
+                <div className={`bg-white rounded-[2rem] shadow-sm border border-slate-50 mb-8 flex flex-col flex-grow items-center justify-center relative overflow-y-auto custom-scrollbar ${isDesktopMode ? 'p-10 min-h-[250px]' : 'p-6 min-h-[180px]'}`}>
+                  <div className={`absolute top-6 left-8 text-slate-300 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
                     Q{currentCardIndex + 1}.
                   </div>
                   
-                  <div className="flex items-start justify-center gap-4 w-full flex-grow">
+                  <div className="flex items-start justify-center gap-4 w-full flex-grow pt-8">
                     <div className={`font-bold text-slate-800 leading-snug break-keep w-full text-center ${
                       isDesktopMode 
                         ? (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl') 
@@ -776,8 +827,38 @@
                   </div>
                 </div>
 
-                {quizType === 'voice' ? (
-                  <div className="space-y-4 w-full">
+                {quizType === 'multipleChoice' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 w-full flex-shrink-0 animate-in slide-in-from-bottom-2">
+                    {multipleChoiceOptions.map((opt, idx) => (
+                      <button 
+                        key={idx}
+                        onClick={() => checkMultipleChoiceAnswer(opt)}
+                        disabled={isTransitioning}
+                        className={`w-full p-4 md:p-6 text-left rounded-2xl border-2 shadow-sm transition-all flex items-center gap-4 group ${
+                          isTransitioning 
+                            ? (opt === cards[currentCardIndex].answer 
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                                : 'border-slate-100 bg-slate-50 text-slate-400')
+                            : 'border-slate-100 bg-white hover:border-blue-400 hover:shadow-md active:scale-95 text-slate-700'
+                        }`}
+                      >
+                        <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-black flex-shrink-0 ${
+                          isTransitioning && opt === cards[currentCardIndex].answer 
+                            ? 'bg-emerald-500 text-white' 
+                            : 'bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600'
+                        } ${isDesktopMode ? 'text-base' : 'text-sm'}`}>
+                          {idx + 1}
+                        </div>
+                        <span className={`font-bold leading-relaxed whitespace-pre-wrap break-keep ${isDesktopMode ? 'text-lg' : 'text-sm'}`}>
+                          {opt}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {quizType === 'voice' && (
+                  <div className="space-y-4 w-full flex-shrink-0">
                     <div className={`w-full flex flex-col items-center justify-center transition-all duration-500 shadow-xl ${
                       isListening ? 'bg-rose-50 text-rose-600 ring-4 ring-rose-100 border-2 border-rose-200' : 'bg-slate-900 text-white'
                     } ${isDesktopMode ? 'py-16 rounded-[3rem]' : 'py-10 rounded-[2.5rem]'}`}>
@@ -801,8 +882,10 @@
                       )}
                     </div>
                   </div>
-                ) : (
-                  <div className="animate-in slide-in-from-bottom-2 w-full">
+                )}
+                
+                {quizType === 'typing' && (
+                  <div className="animate-in slide-in-from-bottom-2 w-full flex-shrink-0">
                     <div className="relative">
                       <input 
                         type="text" autoFocus value={userTypedAnswer}
