@@ -108,10 +108,30 @@
       const [isDesktopMode, setIsDesktopMode] = useState(window.innerWidth >= 1024); 
       const activeQuizRef = useRef(false);
 
-      // (과거에 카테고리로 분리되어 저장된 데이터까지 합쳐서 하나의 온전한 문제로 보여주기 위한 함수)
+      // 과거에 분리 저장된 데이터까지 합쳐 온전한 문제로 재구성
       const getFullQuestion = (card) => {
         if (!card) return "";
         return card.category && card.category !== "일반" ? `[${card.category}] ${card.question}` : card.question;
+      };
+
+      // 텍스트에서 [소제목] 부분을 분리하여 자연스러운 계층(위: 작은 소제목, 아래: 큰 본문)으로 보여주는 함수
+      const renderQuestionContent = (text) => {
+        if (!text) return null;
+        const match = text.match(/^\[(.*?)\]/);
+        if (match) {
+          const title = `[${match[1]}]`;
+          const content = text.replace(/^\[.*?\]/, '').trim();
+          return (
+            <>
+              {/* 소제목은 메인 글씨 크기의 70%(0.7em)로 자동 조정됨 */}
+              <span className="block text-slate-600 mb-2 md:mb-3 opacity-90" style={{ fontSize: '0.7em' }}>
+                {title}
+              </span>
+              <span>{content}</span>
+            </>
+          );
+        }
+        return <span>{text}</span>;
       };
 
       useEffect(() => {
@@ -405,7 +425,7 @@
             let q = parts[0].replace(/^"|"$/g, '').trim();
             let a = parts[1].replace(/^"|"$/g, '').trim();
 
-            // 문제(q)에 포함된 대괄호를 더 이상 추출/분리하지 않고 통째로 저장합니다.
+            // 더 이상 파란색 뱃지용 카테고리를 분리하지 않습니다.
             const category = "일반";
             const cleanQuestion = q;
 
@@ -647,29 +667,31 @@
             {/* 플래시 카드 모드 */}
             {view === 'study' && (
               <div className="flex flex-col items-center h-full animate-in slide-in-from-bottom-2">
-                <div className="w-full flex justify-between items-center mb-6 px-2">
-                  <span className={`font-black text-slate-400 uppercase tracking-widest ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>{currentCardIndex + 1} / {cards.length}</span>
-                  <div className="w-10"></div> 
+                {/* 헤더에서 파란색 카테고리 뱃지를 제거하고 왼쪽 정렬 유지 */}
+                <div className="w-full flex justify-start items-center mb-6 px-4">
+                  <span className={`font-black text-slate-400 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>{currentCardIndex + 1} / {cards.length}</span>
                 </div>
 
                 <div 
                   onClick={handleCardClick}
                   className={`w-full relative cursor-pointer transition-all duration-500 preserve-3d shadow-2xl shadow-indigo-100/40 rounded-[2.5rem] active:scale-[0.99] ${isFlipped ? 'rotate-y-180' : ''} ${isDesktopMode ? 'aspect-video max-h-[600px]' : 'aspect-[4/5] max-h-[420px]'}`}
                 >
+                  {/* 카드 앞면 (문제) */}
                   <div className="absolute inset-0 bg-white flex flex-col items-center justify-center p-12 text-center backface-hidden rounded-[2.5rem] border border-slate-100 overflow-y-auto relative">
                     <div className={`absolute top-6 left-8 text-slate-300 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
                       Q{currentCardIndex + 1}.
                     </div>
-                    <div className={`font-bold text-slate-800 leading-relaxed whitespace-pre-wrap break-keep ${
+                    <div className={`font-bold text-slate-800 leading-relaxed whitespace-pre-wrap break-keep w-full ${
                       isDesktopMode 
                         ? (getFullQuestion(cards[currentCardIndex]).length > 50 ? 'text-4xl lg:text-5xl' : 'text-5xl lg:text-6xl') 
                         : (getFullQuestion(cards[currentCardIndex]).length > 50 ? 'text-xl' : 'text-3xl')
                     }`}>
-                      {getFullQuestion(cards[currentCardIndex])}
+                      {renderQuestionContent(getFullQuestion(cards[currentCardIndex]))}
                     </div>
                     <div className={`mt-10 text-slate-300 font-bold border-t border-slate-50 pt-4 w-1/3 tracking-widest text-center animate-pulse ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>TOUCH FOR ANSWER</div>
                   </div>
                   
+                  {/* 카드 뒷면 (정답) */}
                   <div className="absolute inset-0 bg-[#1e293b] flex flex-col items-center justify-center p-12 text-center rotate-y-180 backface-hidden rounded-[2.5rem] border-2 border-indigo-500/20 overflow-y-auto shadow-inner relative">
                     <div className={`absolute top-6 left-8 text-indigo-400 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
                       A.
@@ -712,13 +734,13 @@
                   </div>
                   
                   <div className="flex items-start justify-center gap-4 w-full px-4 mt-6">
-                    <h3 className={`font-bold text-slate-800 leading-snug break-keep ${
+                    <div className={`font-bold text-slate-800 leading-snug break-keep w-full ${
                       isDesktopMode 
                         ? (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl') 
                         : (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-xl' : 'text-2xl')
                     }`}>
-                      {getFullQuestion(cards[currentCardIndex])}
-                    </h3>
+                      {renderQuestionContent(getFullQuestion(cards[currentCardIndex]))}
+                    </div>
                     {quizType === 'voice' && (
                       <button 
                         onClick={() => speakText(getFullQuestion(cards[currentCardIndex]))} 
