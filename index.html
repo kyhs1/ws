@@ -105,11 +105,14 @@
       const [feedback, setFeedback] = useState(null);
       const [isLoading, setIsLoading] = useState(true);
 
-      // --- PC 버전 / 모바일 버전 상태 관리 ---
-      // 화면 너비가 1024px 이상이면 기본적으로 PC 모드로 켜짐
       const [isDesktopMode, setIsDesktopMode] = useState(window.innerWidth >= 1024); 
-
       const activeQuizRef = useRef(false);
+
+      // (과거에 카테고리로 분리되어 저장된 데이터까지 합쳐서 하나의 온전한 문제로 보여주기 위한 함수)
+      const getFullQuestion = (card) => {
+        if (!card) return "";
+        return card.category && card.category !== "일반" ? `[${card.category}] ${card.question}` : card.question;
+      };
 
       useEffect(() => {
         if (view !== 'quiz') {
@@ -265,7 +268,7 @@
         const card = quizCards[index];
         if (!card) return;
 
-        speakText(card.question, () => {
+        speakText(getFullQuestion(card), () => {
           if (!activeQuizRef.current) return;
           startListeningHandsFree((transcript) => {
             if (!activeQuizRef.current) return;
@@ -288,7 +291,7 @@
                           (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1));
         
         setQuizResults(prev => [...prev, {
-          question: card.question,
+          question: getFullQuestion(card),
           userAnswer: isPass && userAnswer === "패스" ? "(무응답/패스)" : userAnswer,
           correctAnswer: correctAnswer,
           isCorrect: isCorrect
@@ -402,9 +405,9 @@
             let q = parts[0].replace(/^"|"$/g, '').trim();
             let a = parts[1].replace(/^"|"$/g, '').trim();
 
-            const categoryMatch = q.match(/^\[(.*?)\]/);
-            const category = categoryMatch ? categoryMatch[1] : "일반";
-            const cleanQuestion = q.replace(/^\[.*?\]/, '').trim();
+            // 문제(q)에 포함된 대괄호를 더 이상 추출/분리하지 않고 통째로 저장합니다.
+            const category = "일반";
+            const cleanQuestion = q;
 
             await cardsRef.add({
               category,
@@ -446,7 +449,7 @@
                           (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1);
         
         setQuizResults(prev => [...prev, {
-          question: currentCard.question,
+          question: getFullQuestion(currentCard),
           userAnswer: userAnswer,
           correctAnswer: correctAnswer,
           isCorrect: isCorrect
@@ -507,7 +510,6 @@
           
           <h1 className={`font-black text-slate-800 tracking-tight ${isDesktopMode ? 'text-xl' : 'text-base'}`}>Smart Study</h1>
           
-          {/* PC / 모바일 버전 토글 버튼 */}
           <button 
             onClick={() => setIsDesktopMode(!isDesktopMode)} 
             className={`flex items-center gap-2 p-1.5 px-3 rounded-full border transition-all active:scale-95 ${isDesktopMode ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
@@ -542,7 +544,6 @@
             </div>
           )}
 
-          {/* 컨테이너 너비를 isDesktopMode에 따라 동적으로 변경 */}
           <main className={`mx-auto px-4 py-4 w-full flex-grow transition-all duration-300 ${isDesktopMode ? 'max-w-5xl' : 'max-w-md'}`}>
             
             {/* 메인 홈 */}
@@ -567,7 +568,6 @@
                   </button>
                 </div>
 
-                {/* 과목 리스트 - PC 버전일 때 2열/3열 그리드 적용 */}
                 <div className={`grid gap-4 ${isDesktopMode ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}>
                   {subjects.length === 0 ? (
                     <div className="py-12 text-center bg-white rounded-3xl border border-dashed border-slate-200 col-span-full">
@@ -649,33 +649,35 @@
               <div className="flex flex-col items-center h-full animate-in slide-in-from-bottom-2">
                 <div className="w-full flex justify-between items-center mb-6 px-2">
                   <span className={`font-black text-slate-400 uppercase tracking-widest ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>{currentCardIndex + 1} / {cards.length}</span>
-                  <div className={`bg-indigo-50 rounded-full font-bold text-indigo-500 uppercase tracking-wide ${isDesktopMode ? 'px-4 py-1.5 text-xs' : 'px-2.5 py-0.5 text-[9px]'}`}>{cards[currentCardIndex]?.category}</div>
-                  <div className={isDesktopMode ? "w-10" : "w-6"}></div> 
+                  <div className="w-10"></div> 
                 </div>
 
-                {/* 카드 비율 및 폰트 사이즈 반응형 적용 */}
                 <div 
                   onClick={handleCardClick}
                   className={`w-full relative cursor-pointer transition-all duration-500 preserve-3d shadow-2xl shadow-indigo-100/40 rounded-[2.5rem] active:scale-[0.99] ${isFlipped ? 'rotate-y-180' : ''} ${isDesktopMode ? 'aspect-video max-h-[600px]' : 'aspect-[4/5] max-h-[420px]'}`}
                 >
-                  <div className="absolute inset-0 bg-white flex flex-col items-center justify-center p-12 text-center backface-hidden rounded-[2.5rem] border border-slate-100 overflow-y-auto">
-                    <div className={`text-indigo-400 font-black mb-6 uppercase tracking-[0.2em] ${isDesktopMode ? 'text-sm' : 'text-[9px]'}`}>Question</div>
+                  <div className="absolute inset-0 bg-white flex flex-col items-center justify-center p-12 text-center backface-hidden rounded-[2.5rem] border border-slate-100 overflow-y-auto relative">
+                    <div className={`absolute top-6 left-8 text-slate-300 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
+                      Q{currentCardIndex + 1}.
+                    </div>
                     <div className={`font-bold text-slate-800 leading-relaxed whitespace-pre-wrap break-keep ${
                       isDesktopMode 
-                        ? (cards[currentCardIndex]?.question.length > 50 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-5xl') 
-                        : (cards[currentCardIndex]?.question.length > 50 ? 'text-base' : 'text-xl')
+                        ? (getFullQuestion(cards[currentCardIndex]).length > 50 ? 'text-4xl lg:text-5xl' : 'text-5xl lg:text-6xl') 
+                        : (getFullQuestion(cards[currentCardIndex]).length > 50 ? 'text-xl' : 'text-3xl')
                     }`}>
-                      {cards[currentCardIndex]?.question}
+                      {getFullQuestion(cards[currentCardIndex])}
                     </div>
                     <div className={`mt-10 text-slate-300 font-bold border-t border-slate-50 pt-4 w-1/3 tracking-widest text-center animate-pulse ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>TOUCH FOR ANSWER</div>
                   </div>
                   
-                  <div className="absolute inset-0 bg-[#1e293b] flex flex-col items-center justify-center p-12 text-center rotate-y-180 backface-hidden rounded-[2.5rem] border-2 border-indigo-500/20 overflow-y-auto shadow-inner">
-                    <div className={`text-indigo-300 font-black mb-6 uppercase tracking-[0.2em] ${isDesktopMode ? 'text-sm' : 'text-[9px]'}`}>Answer</div>
+                  <div className="absolute inset-0 bg-[#1e293b] flex flex-col items-center justify-center p-12 text-center rotate-y-180 backface-hidden rounded-[2.5rem] border-2 border-indigo-500/20 overflow-y-auto shadow-inner relative">
+                    <div className={`absolute top-6 left-8 text-indigo-400 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
+                      A.
+                    </div>
                     <div className={`font-bold text-white leading-relaxed whitespace-pre-wrap break-keep ${
                       isDesktopMode 
-                        ? (cards[currentCardIndex]?.answer.length > 80 ? 'text-xl lg:text-2xl' : 'text-3xl lg:text-4xl') 
-                        : (cards[currentCardIndex]?.answer.length > 50 ? 'text-base' : 'text-lg')
+                        ? (cards[currentCardIndex]?.answer.length > 80 ? 'text-3xl lg:text-4xl' : 'text-4xl lg:text-5xl') 
+                        : (cards[currentCardIndex]?.answer.length > 50 ? 'text-lg' : 'text-2xl')
                     }`}>
                       {cards[currentCardIndex]?.answer}
                     </div>
@@ -705,19 +707,21 @@
                 </div>
 
                 <div className={`bg-white rounded-[2rem] shadow-sm border border-slate-50 mb-8 flex flex-col items-center justify-center text-center relative ${isDesktopMode ? 'p-12 min-h-[300px]' : 'p-8 min-h-[200px]'}`}>
-                  <div className={`text-slate-300 font-black mb-4 tracking-[0.2em] uppercase ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>{cards[currentCardIndex]?.category}</div>
+                  <div className={`absolute top-6 left-8 text-slate-300 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
+                    Q{currentCardIndex + 1}.
+                  </div>
                   
-                  <div className="flex items-start justify-center gap-4">
+                  <div className="flex items-start justify-center gap-4 w-full px-4 mt-6">
                     <h3 className={`font-bold text-slate-800 leading-snug break-keep ${
                       isDesktopMode 
-                        ? (cards[currentCardIndex]?.question.length > 60 ? 'text-2xl' : 'text-3xl lg:text-4xl') 
-                        : (cards[currentCardIndex]?.question.length > 60 ? 'text-base' : 'text-lg')
+                        ? (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl') 
+                        : (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-xl' : 'text-2xl')
                     }`}>
-                      {cards[currentCardIndex]?.question}
+                      {getFullQuestion(cards[currentCardIndex])}
                     </h3>
                     {quizType === 'voice' && (
                       <button 
-                        onClick={() => speakText(cards[currentCardIndex]?.question)} 
+                        onClick={() => speakText(getFullQuestion(cards[currentCardIndex]))} 
                         className={`flex-shrink-0 bg-indigo-50 text-indigo-500 rounded-full hover:bg-indigo-100 active:scale-95 transition-all shadow-sm ${isDesktopMode ? 'p-3 mt-1' : 'p-2 mt-0.5'}`}
                         title="문제 다시 듣기"
                       >
