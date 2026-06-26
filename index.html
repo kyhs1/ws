@@ -5,17 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>스마트 스터디 마스터</title>
   
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- React & ReactDOM (안정적인 jsdelivr 사용) -->
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Babel (브라우저에서 JSX 변환용) -->
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
-  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"></script>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- SheetJS (엑셀 파일 처리) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
+  <!-- Firebase v8 (CDN 방식 적용) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
@@ -227,7 +233,6 @@
         return () => unsubscribe();
       }, [user, selectedSubject]);
 
-
       const loadCards = async (subjectId) => {
         setIsLoading(true);
         try {
@@ -437,7 +442,6 @@
         return [correctAnswer, ...distractors].sort(() => 0.5 - Math.random());
       };
 
-      // 🛠️ 객관식 퀴즈 채점 로직 및 상태 연동 인덱스 바인딩 버그 수정
       const checkMultipleChoiceAnswer = (selectedOption) => {
         if (isTransitioning) return; 
         const currentCard = cards[currentCardIndex];
@@ -464,7 +468,7 @@
         
         const delay = isCorrect ? 1200 : 2200;
         setTimeout(() => {
-          const nextIndex = currentCardIndex + 1; // 💡 비동기 인덱스 처리를 위해 다음 임시 변수 할당
+          const nextIndex = currentCardIndex + 1; // 비동기 에러 해결을 위한 임시 변수 사용
           if (nextIndex < cards.length) {
             setCurrentCardIndex(nextIndex);
             setMultipleChoiceOptions(generateOptions(cards[nextIndex].answer, cards));
@@ -624,14 +628,12 @@
         setTimeout(() => setFeedback(null), 3000);
       };
 
-      // 💡 퀴즈 시작 함수 내 깊은 복사(Deep Copy) 및 옵션 사전 정의 추가 
       const startQuiz = (type) => {
         if (cards.length === 0) {
           showFeedback("문제가 없습니다.");
           return;
         }
 
-        // 원본 배열 복사 및 안전 셔플
         const shuffledCards = [...cards].sort(() => 0.5 - Math.random());
         setCards(shuffledCards);
 
@@ -643,7 +645,6 @@
         setUserTypedAnswer("");
 
         if (type === 'multipleChoice') {
-          // 첫 번째 문제의 정답 선택지 생성 보장
           setMultipleChoiceOptions(generateOptions(shuffledCards[0].answer, shuffledCards));
         }
 
