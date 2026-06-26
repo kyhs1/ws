@@ -5,23 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>스마트 스터디 마스터</title>
   
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   
-  <!-- Babel (브라우저에서 JSX 변환용) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.js"></script>
 
-  <!-- SheetJS (엑셀 파일 처리) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-  <!-- Firebase v8 (CDN 방식 적용) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
@@ -223,7 +217,6 @@
            const slots = { 1: null, 2: null, 3: null, 4: null, 5: null };
            snapshot.forEach(doc => {
                const data = doc.data();
-               // 현재 과목에 해당하는 슬롯만 필터링
                if (data.subjectId === selectedSubject.id) {
                    slots[data.slotNum] = data;
                }
@@ -315,17 +308,15 @@
         if (!isFlipped) {
           setIsFlipped(true);
         } else {
-          // 카드가 뒤집힌 상태에서 한 번 더 터치하면 '외움'으로 간주하고 넘어감
           handleStudyNext(true, e);
         }
       };
 
       // --- 외움 / 못 외움 처리 함수 ---
       const handleStudyNext = (isMemorized, e) => {
-        if (e) e.stopPropagation(); // 카드 자체 클릭 이벤트 무시
+        if (e) e.stopPropagation();
 
         if (!isMemorized) {
-          // 못 외운 카드 저장
           setNotMemorizedCards(prev => [...prev, studyList[currentCardIndex]]);
         }
 
@@ -333,7 +324,6 @@
           setIsFlipped(false);
           setTimeout(() => { setCurrentCardIndex(prev => prev + 1); }, 150); 
         } else {
-          // 모든 카드를 다 봤으면 결과 창으로 이동
           setView('study-result');
         }
       };
@@ -447,6 +437,7 @@
         return [correctAnswer, ...distractors].sort(() => 0.5 - Math.random());
       };
 
+      // 🛠️ 객관식 퀴즈 채점 로직 및 상태 연동 인덱스 바인딩 버그 수정
       const checkMultipleChoiceAnswer = (selectedOption) => {
         if (isTransitioning) return; 
         const currentCard = cards[currentCardIndex];
@@ -471,11 +462,12 @@
           showFeedback(`오답입니다. 정답: ${correctAnswer}`);
         }
         
-        const delay = isCorrect ? 1500 : 2500;
+        const delay = isCorrect ? 1200 : 2200;
         setTimeout(() => {
-          if (currentCardIndex < cards.length - 1) {
-            setCurrentCardIndex(i => i + 1);
-            setMultipleChoiceOptions(generateOptions(cards[currentCardIndex + 1].answer, cards));
+          const nextIndex = currentCardIndex + 1; // 💡 비동기 인덱스 처리를 위해 다음 임시 변수 할당
+          if (nextIndex < cards.length) {
+            setCurrentCardIndex(nextIndex);
+            setMultipleChoiceOptions(generateOptions(cards[nextIndex].answer, cards));
           } else {
             setView('result');
           }
@@ -512,7 +504,7 @@
         
         setUserTypedAnswer("");
         
-        const delay = isCorrect ? 1500 : 2500;
+        const delay = isCorrect ? 1200 : 2200;
         setTimeout(() => {
           if (currentCardIndex < cards.length - 1) {
             setCurrentCardIndex(i => i + 1);
@@ -632,12 +624,14 @@
         setTimeout(() => setFeedback(null), 3000);
       };
 
+      // 💡 퀴즈 시작 함수 내 깊은 복사(Deep Copy) 및 옵션 사전 정의 추가 
       const startQuiz = (type) => {
         if (cards.length === 0) {
           showFeedback("문제가 없습니다.");
           return;
         }
 
+        // 원본 배열 복사 및 안전 셔플
         const shuffledCards = [...cards].sort(() => 0.5 - Math.random());
         setCards(shuffledCards);
 
@@ -649,6 +643,7 @@
         setUserTypedAnswer("");
 
         if (type === 'multipleChoice') {
+          // 첫 번째 문제의 정답 선택지 생성 보장
           setMultipleChoiceOptions(generateOptions(shuffledCards[0].answer, shuffledCards));
         }
 
@@ -782,7 +777,7 @@
                   <div className={`col-span-full bg-white rounded-2xl border border-slate-100 shadow-sm p-4 md:p-6 mb-2`}>
                       <div className="flex justify-between items-center mb-4">
                           <h3 className={`font-black text-slate-700 flex items-center gap-2 ${isDesktopMode ? 'text-base' : 'text-xs'}`}>
-                              <Icon name="Bookmark" size={16} className="text-rose-500" /> 오답 노트 보관함 (슬롯 1~5)
+                            <Icon name="Bookmark" size={16} className="text-rose-500" /> 오답 노트 보관함 (슬롯 1~5)
                           </h3>
                       </div>
                       <div className="flex gap-3 overflow-x-auto pb-4 px-1 custom-scrollbar justify-start">
@@ -984,7 +979,7 @@
             )}
 
             {/* 퀴즈 모드 */}
-            {view === 'quiz' && (
+            {view === 'quiz' && cards[currentCardIndex] && (
               <div className="animate-in max-w-3xl mx-auto w-full flex flex-col h-full flex-grow pb-4">
                 <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden flex-shrink-0">
                   <div className="absolute top-0 left-0 h-1.5 bg-emerald-400 transition-all duration-700" style={{width: `${((currentCardIndex + 1) / cards.length) * 100}%`}}></div>
@@ -1021,7 +1016,7 @@
                   </div>
                 </div>
 
-                {quizType === 'multipleChoice' && (
+                {quizType === 'multipleChoice' && multipleChoiceOptions.length > 0 && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 w-full flex-shrink-0 animate-in slide-in-from-bottom-2">
                     {multipleChoiceOptions.map((opt, idx) => (
                       <button 
@@ -1030,14 +1025,14 @@
                         disabled={isTransitioning}
                         className={`w-full p-4 md:p-6 text-left rounded-2xl border-2 shadow-sm transition-all flex items-center gap-4 group ${
                           isTransitioning 
-                            ? (opt === cards[currentCardIndex].answer 
+                            ? (opt === cards[currentCardIndex]?.answer 
                                 ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                                 : 'border-slate-100 bg-slate-50 text-slate-400')
                             : 'border-slate-100 bg-white hover:border-blue-400 hover:shadow-md active:scale-95 text-slate-700'
                         }`}
                       >
                         <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-black flex-shrink-0 ${
-                          isTransitioning && opt === cards[currentCardIndex].answer 
+                          isTransitioning && opt === cards[currentCardIndex]?.answer 
                             ? 'bg-emerald-500 text-white' 
                             : 'bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600'
                         } ${isDesktopMode ? 'text-base' : 'text-sm'}`}>
