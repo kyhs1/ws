@@ -106,7 +106,12 @@
 
       const [studyList, setStudyList] = useState([]);
       const [notMemorizedCards, setNotMemorizedCards] = useState([]);
+      const [studiedCount, setStudiedCount] = useState(0); // 실제로 학습한 카드 수(중간 종료 대응)
       const [savedSlots, setSavedSlots] = useState({ 1: null, 2: null, 3: null, 4: null, 5: null });
+
+      const [quizList, setQuizList] = useState([]); // 이번 테스트에 출제된 문항(전체 중 일부)
+      const [quizCount, setQuizCount] = useState(25); // 테스트당 문항 수 (0 = 전체)
+      const [quizWrongCards, setQuizWrongCards] = useState([]); // 테스트에서 틀린 문항
 
       const [currentCardIndex, setCurrentCardIndex] = useState(0);
       const [isFlipped, setIsFlipped] = useState(false);
@@ -305,15 +310,18 @@
         }
       };
 
-      const saveToSlot = async (slotNum) => {
-        if (!user || notMemorizedCards.length === 0) return;
+      const saveToSlot = async (slotNum, cardList = notMemorizedCards) => {
+        if (!user || !cardList || cardList.length === 0) {
+          showFeedback("저장할 오답이 없습니다.");
+          return;
+        }
         setIsLoading(true);
         try {
           await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(slotDocId(selectedSubject.id, subjectType, slotNum)).set({
              subjectId: selectedSubject.id,
              subjectType: subjectType,
              slotNum: slotNum,
-             cards: notMemorizedCards,
+             cards: cardList,
              updatedAt: Date.now()
           });
           showFeedback(`오답이 슬롯 ${slotNum}에 안전하게 저장되었습니다!`);
@@ -341,6 +349,7 @@
 
         if (mode === 'all') targetCards = [...cards];
         else if (mode === 'review') targetCards = [...notMemorizedCards];
+        else if (mode === 'quizWrong') targetCards = [...quizWrongCards];
         else if (mode === 'slot' && savedSlots[slotNum]) targetCards = [...savedSlots[slotNum].cards];
 
         if (targetCards.length === 0) {
@@ -353,7 +362,18 @@
         setCurrentCardIndex(0);
         setIsFlipped(false);
         setNotMemorizedCards([]);
+        setStudiedCount(0);
         setView('study');
+      };
+
+      // 중간에 학습을 종료해도 지금까지의 오답을 저장할 수 있도록 결과 화면으로 이동
+      const endStudyEarly = () => {
+        if (currentCardIndex === 0 && notMemorizedCards.length === 0) {
+          setView('subject-home');
+          return;
+        }
+        setStudiedCount(currentCardIndex);
+        setView('study-result');
       };
 
       const handleCardClick = (e) => {
@@ -375,6 +395,7 @@
           setIsFlipped(false);
           setTimeout(() => { setCurrentCardIndex(prev => prev + 1); }, 150);
         } else {
+          setStudiedCount(studyList.length);
           setView('study-result');
         }
       };
@@ -388,22 +409,22 @@
         const nextIndex = currentCardIndex + 1;
 
         if (quizType === 'multipleChoice') {
-          if (nextIndex < cards.length) {
+          if (nextIndex < quizList.length) {
             setCurrentCardIndex(nextIndex);
-            setMultipleChoiceOptions(generateOptions(cards[nextIndex], cards));
+            setMultipleChoiceOptions(generateOptions(quizList[nextIndex], cards));
           } else {
             setView('result');
           }
         } else if (quizType === 'typing') {
-          if (nextIndex < cards.length) {
+          if (nextIndex < quizList.length) {
             setCurrentCardIndex(nextIndex);
           } else {
             setView('result');
           }
         } else if (quizType === 'voice') {
-          if (nextIndex < cards.length) {
+          if (nextIndex < quizList.length) {
             setCurrentCardIndex(nextIndex);
-            runVoiceTurn(nextIndex, cards);
+            runVoiceTurn(nextIndex, quizList);
           } else {
             setView('result');
             speakText("수고하셨습니다. 퀴즈가 종료되었습니다.");
@@ -481,6 +502,8 @@
           isCorrect: isCorrect
         }]);
 
+        if (!isCorrect) setQuizWrongCards(prev => [...prev, card]);
+
         let feedbackText = "";
         if (isCorrect) {
           setQuizScore(s => s + 1);
@@ -539,7 +562,7 @@
 
       const checkMultipleChoiceAnswer = (selectedOption) => {
         if (isTransitioning) return;
-        const currentCard = cards[currentCardIndex];
+        const currentCard = quizList[currentCardIndex];
         if (!currentCard) return;
 
         setIsTransitioning(true);
@@ -562,15 +585,16 @@
           // 정답일 경우에만 자동으로 넘어감
           setTimeout(() => {
             const nextIndex = currentCardIndex + 1;
-            if (nextIndex < cards.length) {
+            if (nextIndex < quizList.length) {
               setCurrentCardIndex(nextIndex);
-              setMultipleChoiceOptions(generateOptions(cards[nextIndex], cards));
+              setMultipleChoiceOptions(generateOptions(quizList[nextIndex], cards));
             } else {
               setView('result');
             }
             setIsTransitioning(false);
           }, 1200);
         } else {
+          setQuizWrongCards(prev => [...prev, currentCard]);
           showFeedback(`오답입니다. 정답: ${correctAnswer}`);
           setIsWaitingForNext(true); // 오답일 경우 다음 버튼 대기
         }
@@ -578,7 +602,7 @@
 
       const checkTypingAnswer = (userAnswer) => {
         if (isTransitioning) return;
-        const currentCard = cards[currentCardIndex];
+        const currentCard = quizList[currentCardIndex];
         if (!currentCard) return;
 
         setIsTransitioning(true);
@@ -604,7 +628,7 @@
 
           // 정답일 경우 자동 넘어감
           setTimeout(() => {
-            if (currentCardIndex < cards.length - 1) {
+            if (currentCardIndex < quizList.length - 1) {
               setCurrentCardIndex(i => i + 1);
             } else {
               setView('result');
@@ -612,6 +636,7 @@
             setIsTransitioning(false);
           }, 1200);
         } else {
+          setQuizWrongCards(prev => [...prev, currentCard]);
           showFeedback(`오답입니다. 정답: ${correctAnswer}`);
           setIsWaitingForNext(true); // 오답일 경우 다음 버튼 대기
         }
@@ -860,26 +885,31 @@
           return;
         }
 
+        // 전체 문항을 섞은 뒤 설정된 문항 수만큼만 출제 (0이면 전체)
         const shuffledCards = [...cards].sort(() => 0.5 - Math.random());
-        setCards(shuffledCards);
+        const picked = (quizCount > 0 && quizCount < shuffledCards.length)
+          ? shuffledCards.slice(0, quizCount)
+          : shuffledCards;
 
+        setQuizList(picked);
         setQuizType(type);
         setCurrentCardIndex(0);
         setQuizScore(0);
         setQuizResults([]);
+        setQuizWrongCards([]);
         setIsTransitioning(false);
         setIsWaitingForNext(false); // 모달 상태 초기화
         setUserTypedAnswer("");
 
         if (type === 'multipleChoice') {
-          setMultipleChoiceOptions(generateOptions(shuffledCards[0], shuffledCards));
+          setMultipleChoiceOptions(generateOptions(picked[0], cards));
         }
 
         setView('quiz');
         activeQuizRef.current = true;
 
         if (type === 'voice') {
-          setTimeout(() => runVoiceTurn(0, shuffledCards), 500);
+          setTimeout(() => runVoiceTurn(0, picked), 500);
         }
       };
 
@@ -1179,6 +1209,31 @@
                       </div>
                   </div>
 
+                  {/* 테스트 문항 수 선택 */}
+                  <div className={`col-span-full bg-white rounded-2xl border border-slate-100 shadow-sm p-4 md:p-6`}>
+                    <h3 className={`font-black text-slate-700 flex items-center gap-2 mb-4 ${isDesktopMode ? 'text-base' : 'text-xs'}`}>
+                      <Icon name="ListChecks" size={16} className="text-blue-500" /> 테스트 문항 수
+                      <span className={`font-bold text-slate-400 ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
+                        (전체 {cards.length}문항 중 {quizCount === 0 || quizCount > cards.length ? cards.length : quizCount}문항 랜덤 출제)
+                      </span>
+                    </h3>
+                    <div className="flex gap-2 flex-wrap">
+                      {[10, 15, 20, 25, 30].map(n => (
+                        <button
+                          key={n}
+                          onClick={() => setQuizCount(n)}
+                          className={`rounded-xl border-2 font-black transition-all active:scale-95 ${
+                            quizCount === n
+                              ? 'border-blue-500 bg-blue-500 text-white shadow-md'
+                              : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-blue-300 hover:bg-blue-50'
+                          } ${isDesktopMode ? 'px-6 py-3 text-sm' : 'px-4 py-2 text-xs'}`}
+                        >
+                          {`${n}문제`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* 퀴즈 영역 */}
                   <button
                     onClick={() => startQuiz('voice')}
@@ -1218,8 +1273,11 @@
             {view === 'study' && (
               <div className="flex flex-col h-full flex-grow animate-in slide-in-from-bottom-2 pb-4">
                 <div className="w-full flex justify-between items-center mb-4 px-4 shrink-0">
-                  <span className={`font-black text-slate-400 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>{currentCardIndex + 1} / {studyList.length}</span>
-                  <button onClick={() => setView('subject-home')} className={`text-slate-400 hover:text-slate-600 font-bold transition-colors ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>학습 종료</button>
+                  <span className={`font-black text-slate-400 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>
+                    {currentCardIndex + 1} / {studyList.length}
+                    {notMemorizedCards.length > 0 && <span className="text-rose-400 ml-2">· 못 외움 {notMemorizedCards.length}</span>}
+                  </span>
+                  <button onClick={endStudyEarly} className={`text-slate-400 hover:text-slate-600 font-bold transition-colors ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>학습 종료</button>
                 </div>
 
                 <div
@@ -1259,14 +1317,6 @@
                       }`}>
                         {studyList[currentCardIndex]?.answer}
                       </div>
-                      {/* 해설이 있으면 정답 아래에 표시 (암기박스) */}
-                      {studyList[currentCardIndex]?.explanation && (
-                        <div className="w-full text-center pb-6 flex-shrink-0">
-                          <div className={`inline-block bg-white/10 rounded-xl px-5 py-3 text-slate-300 leading-relaxed whitespace-pre-wrap break-keep text-left ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
-                            💡 {studyList[currentCardIndex].explanation}
-                          </div>
-                        </div>
-                      )}
                     </div>
                     <div className={`flex-shrink-0 pb-8 pt-2 text-center text-slate-400 font-bold tracking-widest animate-pulse ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
                       외웠다면 카드를 터치하세요 (다음 문제)
@@ -1295,17 +1345,24 @@
                 <div className={`bg-indigo-50 text-indigo-500 rounded-[2rem] flex items-center justify-center shadow-inner mb-8 mx-auto ${isDesktopMode ? 'w-28 h-28' : 'w-20 h-20'}`}>
                   <Icon name="BookOpen" size={isDesktopMode ? 56 : 40} />
                 </div>
-                <h2 className={`font-black text-slate-800 mb-8 tracking-tighter uppercase ${isDesktopMode ? 'text-3xl' : 'text-lg'}`}>학습 완료!</h2>
+                <h2 className={`font-black text-slate-800 mb-2 tracking-tighter uppercase ${isDesktopMode ? 'text-3xl' : 'text-lg'}`}>
+                  {studiedCount < studyList.length ? '학습 중간 저장' : '학습 완료!'}
+                </h2>
+                {studiedCount < studyList.length && (
+                  <p className={`text-slate-400 font-bold mb-6 ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>
+                    전체 {studyList.length}장 중 {studiedCount}장까지 학습했습니다
+                  </p>
+                )}
 
-                <div className={`bg-white w-full rounded-3xl border border-slate-100 shadow-sm mb-8 ${isDesktopMode ? 'p-10' : 'p-6'}`}>
+                <div className={`bg-white w-full rounded-3xl border border-slate-100 shadow-sm mb-8 mt-6 ${isDesktopMode ? 'p-10' : 'p-6'}`}>
                   <div className="flex justify-around items-center">
                     <div className="flex flex-col">
                       <span className={`text-slate-400 font-bold mb-1 ${isDesktopMode ? 'text-sm' : 'text-[10px]'}`}>총 학습 카드</span>
-                      <span className={`font-black text-slate-700 ${isDesktopMode ? 'text-4xl' : 'text-2xl'}`}>{studyList.length}</span>
+                      <span className={`font-black text-slate-700 ${isDesktopMode ? 'text-4xl' : 'text-2xl'}`}>{studiedCount}</span>
                     </div>
                     <div className="flex flex-col">
                       <span className={`text-emerald-500 font-bold mb-1 ${isDesktopMode ? 'text-sm' : 'text-[10px]'}`}>외운 카드</span>
-                      <span className={`font-black text-emerald-600 ${isDesktopMode ? 'text-4xl' : 'text-2xl'}`}>{studyList.length - notMemorizedCards.length}</span>
+                      <span className={`font-black text-emerald-600 ${isDesktopMode ? 'text-4xl' : 'text-2xl'}`}>{Math.max(0, studiedCount - notMemorizedCards.length)}</span>
                     </div>
                     <div className="flex flex-col">
                       <span className={`text-rose-500 font-bold mb-1 ${isDesktopMode ? 'text-sm' : 'text-[10px]'}`}>못 외운 카드</span>
@@ -1355,7 +1412,7 @@
             )}
 
             {/* 퀴즈 모드 */}
-            {view === 'quiz' && cards[currentCardIndex] && (
+            {view === 'quiz' && quizList[currentCardIndex] && (
               <div className="animate-in max-w-3xl mx-auto w-full flex flex-col h-full flex-grow pb-4 relative">
 
                 {/* 오답 확인용 전체화면 모달 오버레이 */}
@@ -1368,13 +1425,13 @@
                          <h3 className="text-xl md:text-2xl font-black text-slate-800 mb-3">앗, 틀렸습니다!</h3>
                          <div className="bg-indigo-50/50 p-4 rounded-xl mb-3 border border-indigo-50 text-left overflow-y-auto max-h-48 custom-scrollbar">
                              <span className="text-indigo-400 font-black text-[10px] uppercase tracking-widest block mb-1">정답</span>
-                             <span className="text-slate-700 font-bold whitespace-pre-wrap text-sm md:text-base leading-relaxed break-keep">{cards[currentCardIndex]?.answer}</span>
+                             <span className="text-slate-700 font-bold whitespace-pre-wrap text-sm md:text-base leading-relaxed break-keep">{quizList[currentCardIndex]?.answer}</span>
                          </div>
                          {/* 해설이 있으면 함께 표시 (암기박스) */}
-                         {cards[currentCardIndex]?.explanation && (
+                         {quizList[currentCardIndex]?.explanation && (
                            <div className="bg-amber-50/70 p-4 rounded-xl mb-6 border border-amber-100 text-left overflow-y-auto max-h-40 custom-scrollbar">
                                <span className="text-amber-500 font-black text-[10px] uppercase tracking-widest block mb-1">💡 해설</span>
-                               <span className="text-slate-600 whitespace-pre-wrap text-xs md:text-sm leading-relaxed break-keep">{cards[currentCardIndex].explanation}</span>
+                               <span className="text-slate-600 whitespace-pre-wrap text-xs md:text-sm leading-relaxed break-keep">{quizList[currentCardIndex].explanation}</span>
                            </div>
                          )}
                          <button
@@ -1388,9 +1445,9 @@
                 )}
 
                 <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden flex-shrink-0">
-                  <div className="absolute top-0 left-0 h-1.5 bg-emerald-400 transition-all duration-700" style={{width: `${((currentCardIndex + 1) / cards.length) * 100}%`}}></div>
+                  <div className="absolute top-0 left-0 h-1.5 bg-emerald-400 transition-all duration-700" style={{width: `${((currentCardIndex + 1) / quizList.length) * 100}%`}}></div>
                   <div className={`flex items-center gap-2 text-slate-400 font-black uppercase tracking-widest ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
-                    PROGRESS: {currentCardIndex + 1} / {cards.length}
+                    PROGRESS: {currentCardIndex + 1} / {quizList.length}
                   </div>
                   <div className={`bg-indigo-500 rounded-lg text-white font-black uppercase tracking-widest ${isDesktopMode ? 'px-4 py-1.5 text-xs' : 'px-3 py-1 text-[9px]'}`}>
                     Score: {quizScore}
@@ -1405,14 +1462,14 @@
                   <div className="flex items-start justify-center gap-4 w-full flex-grow pt-8">
                     <div className={`font-bold text-slate-800 leading-snug break-keep w-full text-center ${
                       isDesktopMode
-                        ? (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl')
-                        : (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-xl' : 'text-2xl')
+                        ? (getFullQuestion(quizList[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl')
+                        : (getFullQuestion(quizList[currentCardIndex]).length > 60 ? 'text-xl' : 'text-2xl')
                     }`}>
-                      {renderQuestionContent(getFullQuestion(cards[currentCardIndex]))}
+                      {renderQuestionContent(getFullQuestion(quizList[currentCardIndex]))}
                     </div>
                     {quizType === 'voice' && (
                       <button
-                        onClick={() => speakText(getFullQuestion(cards[currentCardIndex]))}
+                        onClick={() => speakText(getFullQuestion(quizList[currentCardIndex]))}
                         className={`flex-shrink-0 bg-indigo-50 text-indigo-500 rounded-full hover:bg-indigo-100 active:scale-95 transition-all shadow-sm ${isDesktopMode ? 'p-3 mt-1' : 'p-2 mt-0.5'}`}
                         title="문제 다시 듣기"
                       >
@@ -1431,14 +1488,14 @@
                         disabled={isTransitioning || isWaitingForNext}
                         className={`w-full p-4 md:p-6 text-left rounded-2xl border-2 shadow-sm transition-all flex items-center gap-4 group ${
                           isTransitioning
-                            ? (opt === cards[currentCardIndex]?.answer
+                            ? (opt === quizList[currentCardIndex]?.answer
                                 ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                                 : 'border-slate-100 bg-slate-50 text-slate-400')
                             : 'border-slate-100 bg-white hover:border-blue-400 hover:shadow-md active:scale-95 text-slate-700'
                         }`}
                       >
                         <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-black flex-shrink-0 ${
-                          isTransitioning && opt === cards[currentCardIndex]?.answer
+                          isTransitioning && opt === quizList[currentCardIndex]?.answer
                             ? 'bg-emerald-500 text-white'
                             : 'bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600'
                         } ${isDesktopMode ? 'text-base' : 'text-sm'}`}>
@@ -1606,8 +1663,43 @@
 
                 <div className={`bg-white w-full rounded-3xl border border-slate-100 shadow-sm mb-8 ${isDesktopMode ? 'p-10' : 'p-6'}`}>
                   <div className={`text-slate-300 font-black uppercase tracking-[0.3em] mb-2 ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>Score</div>
-                  <div className={`font-black text-indigo-600 ${isDesktopMode ? 'text-6xl' : 'text-4xl'}`}>{quizScore} <span className={`text-slate-200 font-light mx-2 ${isDesktopMode ? 'text-3xl' : 'text-base'}`}>/</span> {cards.length}</div>
+                  <div className={`font-black text-indigo-600 ${isDesktopMode ? 'text-6xl' : 'text-4xl'}`}>{quizScore} <span className={`text-slate-200 font-light mx-2 ${isDesktopMode ? 'text-3xl' : 'text-base'}`}>/</span> {quizList.length}</div>
+                  <div className={`text-slate-400 font-bold mt-3 ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>
+                    전체 {cards.length}문항 중 {quizList.length}문항 랜덤 출제
+                  </div>
                 </div>
+
+                {/* 틀린 문제 → 오답노트 슬롯 저장 */}
+                {quizWrongCards.length > 0 && (
+                  <div className="w-full space-y-4 mb-8">
+                    <button
+                      onClick={() => startStudy('quizWrong')}
+                      className={`w-full bg-rose-500 text-white rounded-2xl font-black shadow-xl shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 ${isDesktopMode ? 'py-6 text-sm' : 'py-4 text-xs'}`}
+                    >
+                      <Icon name="RotateCcw" size={isDesktopMode ? 20 : 16} /> 틀린 {quizWrongCards.length}문제 지금 카드로 복습하기
+                    </button>
+
+                    <div className="bg-white rounded-2xl border border-rose-100 p-4 md:p-6 shadow-sm text-center">
+                      <h3 className={`font-black text-rose-600 mb-4 flex justify-center items-center gap-2 ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
+                        <Icon name="Save" size={16} /> 틀린 {quizWrongCards.length}문제를 오답노트 슬롯에 저장
+                      </h3>
+                      <div className="flex gap-2 overflow-x-auto pb-4 px-1 custom-scrollbar justify-start">
+                        {[1,2,3,4,5].map(num => (
+                          <button
+                            key={num}
+                            onClick={() => saveToSlot(num, quizWrongCards)}
+                            className={`flex-shrink-0 flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all w-14 md:w-16 active:scale-95 ${
+                                savedSlots[num] ? 'border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100' : 'border-slate-100 bg-slate-50 text-slate-500 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span className={`font-black ${isDesktopMode ? 'text-lg' : 'text-base'}`}>S{num}</span>
+                            <span className="text-[8px] font-bold mt-1 text-slate-400">{savedSlots[num] ? '덮어쓰기' : '저장'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="w-full text-left space-y-4 mb-10">
                   <h3 className={`font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4 px-2 ${isDesktopMode ? 'text-sm' : 'text-[10px]'}`}>
