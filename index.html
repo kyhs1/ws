@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>스마트 스터디 마스터</title>
-  
+
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
+
   <!-- React & ReactDOM -->
   <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  
+
   <!-- Babel -->
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
@@ -33,11 +33,11 @@
     .slide-in-from-bottom-2 { animation: slideUp 0.3s ease-out; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    
+
     .preserve-3d { transform-style: preserve-3d; }
     .backface-hidden { backface-visibility: hidden; }
     .rotate-y-180 { transform: rotateY(180deg); }
-    
+
     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.5); border-radius: 10px; }
@@ -64,7 +64,7 @@
     }
     const auth = firebase.auth();
     const db = firebase.firestore();
-    const APP_ID = 'study-master-v1'; 
+    const APP_ID = 'study-master-v1';
 
     const Icon = ({ name, size = 24, className = "" }) => {
       const iconRef = useRef(null);
@@ -78,9 +78,11 @@
           if (name === 'Save' && !lucide.icons['Save']) actualName = 'Download';
           if (name === 'X' && !lucide.icons['X']) actualName = 'XCircle';
           if (name === 'Trash2' && !lucide.icons['Trash2']) actualName = 'Trash';
-          
+          if (name === 'Archive' && !lucide.icons['Archive']) actualName = 'Package';
+          if (name === 'ChevronRight' && !lucide.icons['ChevronRight']) actualName = 'ArrowRight';
+
           const iconData = lucide.icons[actualName] || lucide.icons.Circle;
-          
+
           iconRef.current.innerHTML = `<i data-lucide="${actualName}"></i>`;
           lucide.createIcons({
             root: iconRef.current,
@@ -94,39 +96,45 @@
 
     const App = () => {
       const [user, setUser] = useState(null);
-      const [view, setView] = useState('home'); 
-      const [subjects, setSubjects] = useState([]); 
-      const [selectedSubject, setSelectedSubject] = useState(null); 
-      
+      const [view, setView] = useState('home');
+      const [subjects, setSubjects] = useState([]);
+      const [amboxSubjects, setAmboxSubjects] = useState([]); // 암기박스 과목 목록
+      const [selectedSubject, setSelectedSubject] = useState(null);
+      const [subjectType, setSubjectType] = useState('normal'); // 'normal' | 'ambox'
+
       const [cards, setCards] = useState([]);
-      
-      const [studyList, setStudyList] = useState([]); 
-      const [notMemorizedCards, setNotMemorizedCards] = useState([]); 
+
+      const [studyList, setStudyList] = useState([]);
+      const [notMemorizedCards, setNotMemorizedCards] = useState([]);
       const [savedSlots, setSavedSlots] = useState({ 1: null, 2: null, 3: null, 4: null, 5: null });
 
       const [currentCardIndex, setCurrentCardIndex] = useState(0);
       const [isFlipped, setIsFlipped] = useState(false);
       const [isListening, setIsListening] = useState(false);
-      
+
       // 상태 관리 변수 추가
-      const [isTransitioning, setIsTransitioning] = useState(false); 
+      const [isTransitioning, setIsTransitioning] = useState(false);
       const [isWaitingForNext, setIsWaitingForNext] = useState(false); // 오답 시 다음 문제 대기 모드
       const [isDeleteMode, setIsDeleteMode] = useState(false); // 데이터 삭제 토글 모드
       const [subjectToDelete, setSubjectToDelete] = useState(null); // 삭제 대기 중인 과목
       const [isDeleting, setIsDeleting] = useState(false); // 삭제 진행 중 스피너
 
       const [quizScore, setQuizScore] = useState(0);
-      const [quizResults, setQuizResults] = useState([]); 
-      const [quizType, setQuizType] = useState(null); 
+      const [quizResults, setQuizResults] = useState([]);
+      const [quizType, setQuizType] = useState(null);
       const [userTypedAnswer, setUserTypedAnswer] = useState("");
-      
+
       const [multipleChoiceOptions, setMultipleChoiceOptions] = useState([]);
       const [importText, setImportText] = useState("");
-      const [importSubjectName, setImportSubjectName] = useState(""); 
+      const [importSubjectName, setImportSubjectName] = useState("");
       const [feedback, setFeedback] = useState(null);
       const [isLoading, setIsLoading] = useState(true);
-      const [isDesktopMode, setIsDesktopMode] = useState(window.innerWidth >= 1024); 
+      const [isDesktopMode, setIsDesktopMode] = useState(window.innerWidth >= 1024);
       const activeQuizRef = useRef(false);
+
+      // 과목 타입별 Firestore 컬렉션 참조 (일반 / 암기박스 분리 저장)
+      const getSubjectsRef = (type) => db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection(type === 'ambox' ? 'amboxSubjects' : 'subjects');
+      const slotDocId = (subjId, type, num) => `${type === 'ambox' ? 'ambox_' : ''}${subjId}_${num}`;
 
       const getFullQuestion = (card) => {
         if (!card) return "";
@@ -167,7 +175,7 @@
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'ko-KR';
         utterance.rate = 1.0;
-        
+
         if (onEnd) {
           utterance.onend = () => {
             setTimeout(() => {
@@ -198,8 +206,8 @@
 
       useEffect(() => {
         if (!user) return;
-        const subjectsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('subjects');
-        
+        const subjectsRef = getSubjectsRef('normal');
+
         const unsubscribe = subjectsRef.onSnapshot((snapshot) => {
           const subList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           setSubjects(subList);
@@ -212,39 +220,54 @@
         return () => unsubscribe();
       }, [user]);
 
+      // 암기박스 과목 목록 실시간 구독
+      useEffect(() => {
+        if (!user) return;
+        const amboxRef = getSubjectsRef('ambox');
+
+        const unsubscribe = amboxRef.onSnapshot((snapshot) => {
+          const subList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setAmboxSubjects(subList);
+        }, (error) => {
+          console.error("Ambox Firestore Error:", error);
+        });
+        return () => unsubscribe();
+      }, [user]);
+
       useEffect(() => {
         if (!user || !selectedSubject) return;
         const slotsRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots');
-        
+
         const unsubscribe = slotsRef.onSnapshot(snapshot => {
            const slots = { 1: null, 2: null, 3: null, 4: null, 5: null };
            snapshot.forEach(doc => {
                const data = doc.data();
-               if (data.subjectId === selectedSubject.id) {
+               if (data.subjectId === selectedSubject.id && (data.subjectType || 'normal') === subjectType) {
                    slots[data.slotNum] = data;
                }
            });
            setSavedSlots(slots);
         }, err => console.error("Slots Error:", err));
-        
-        return () => unsubscribe();
-      }, [user, selectedSubject]);
 
-      const loadCards = async (subjectId) => {
+        return () => unsubscribe();
+      }, [user, selectedSubject, subjectType]);
+
+      const loadCards = async (subjectId, type = 'normal') => {
         setIsLoading(true);
         try {
-          const cardsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('subjects').doc(subjectId).collection('cards');
+          const cardsRef = getSubjectsRef(type).doc(subjectId).collection('cards');
           const snapshot = await cardsRef.get();
           let loadedCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          
+
           for (let i = loadedCards.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [loadedCards[i], loadedCards[j]] = [loadedCards[j], loadedCards[i]];
           }
 
           setCards(loadedCards);
-          const sub = subjects.find(s => s.id === subjectId);
+          const sub = (type === 'ambox' ? amboxSubjects : subjects).find(s => s.id === subjectId);
           setSelectedSubject(sub);
+          setSubjectType(type);
           setView('subject-home');
         } catch (e) {
           showFeedback("데이터를 불러오는 중 오류가 발생했습니다.");
@@ -253,22 +276,24 @@
         }
       };
 
-      // --- 과목 일괄 삭제 기능 ---
+      // --- 과목 일괄 삭제 기능 (일반/암기박스 공용, 대량 문항 대비 배치 분할) ---
       const handleDeleteSubject = async (subject) => {
         if (!user) return;
         setIsDeleting(true);
+        const type = subject._type || 'normal';
         try {
-          const cardsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('subjects').doc(subject.id).collection('cards');
-          const snapshot = await cardsRef.get();
-          
-          const batch = db.batch();
-          snapshot.docs.forEach(doc => {
-            batch.delete(doc.ref);
-          });
-          await batch.commit();
+          const subjectDocRef = getSubjectsRef(type).doc(subject.id);
+          const snapshot = await subjectDocRef.collection('cards').get();
 
-          await db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('subjects').doc(subject.id).delete();
-          
+          const docs = snapshot.docs;
+          for (let i = 0; i < docs.length; i += 400) {
+            const batch = db.batch();
+            docs.slice(i, i + 400).forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+          }
+
+          await subjectDocRef.delete();
+
           showFeedback(`${subject.name} 과목이 삭제되었습니다.`);
           setSubjectToDelete(null);
           setIsDeleteMode(false);
@@ -284,8 +309,9 @@
         if (!user || notMemorizedCards.length === 0) return;
         setIsLoading(true);
         try {
-          await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(`${selectedSubject.id}_${slotNum}`).set({
+          await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(slotDocId(selectedSubject.id, subjectType, slotNum)).set({
              subjectId: selectedSubject.id,
+             subjectType: subjectType,
              slotNum: slotNum,
              cards: notMemorizedCards,
              updatedAt: Date.now()
@@ -302,7 +328,7 @@
       const deleteSlot = async (slotNum) => {
         if (!user || !selectedSubject) return;
         try {
-            await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(`${selectedSubject.id}_${slotNum}`).delete();
+            await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(slotDocId(selectedSubject.id, subjectType, slotNum)).delete();
             showFeedback(`슬롯 ${slotNum}이(가) 비워졌습니다.`);
         } catch(e) {
             console.error(e);
@@ -312,7 +338,7 @@
 
       const startStudy = (mode = 'all', slotNum = null) => {
         let targetCards = [];
-        
+
         if (mode === 'all') targetCards = [...cards];
         else if (mode === 'review') targetCards = [...notMemorizedCards];
         else if (mode === 'slot' && savedSlots[slotNum]) targetCards = [...savedSlots[slotNum].cards];
@@ -326,7 +352,7 @@
         setStudyList(shuffledCards);
         setCurrentCardIndex(0);
         setIsFlipped(false);
-        setNotMemorizedCards([]); 
+        setNotMemorizedCards([]);
         setView('study');
       };
 
@@ -347,7 +373,7 @@
 
         if (currentCardIndex < studyList.length - 1) {
           setIsFlipped(false);
-          setTimeout(() => { setCurrentCardIndex(prev => prev + 1); }, 150); 
+          setTimeout(() => { setCurrentCardIndex(prev => prev + 1); }, 150);
         } else {
           setView('study-result');
         }
@@ -358,13 +384,13 @@
         setIsWaitingForNext(false);
         setUserTypedAnswer("");
         setIsTransitioning(false);
-        
+
         const nextIndex = currentCardIndex + 1;
-        
+
         if (quizType === 'multipleChoice') {
           if (nextIndex < cards.length) {
             setCurrentCardIndex(nextIndex);
-            setMultipleChoiceOptions(generateOptions(cards[nextIndex].answer, cards));
+            setMultipleChoiceOptions(generateOptions(cards[nextIndex], cards));
           } else {
             setView('result');
           }
@@ -407,16 +433,16 @@
         recognition.onend = () => {
           setIsListening(false);
           if (!hasResult && activeQuizRef.current && onResult) {
-            onResult("패스"); 
+            onResult("패스");
           }
         };
-        
+
         try {
           recognition.start();
         } catch(e) {
           console.error(e);
           setIsListening(false);
-          if (activeQuizRef.current && onResult) onResult("패스"); 
+          if (activeQuizRef.current && onResult) onResult("패스");
         }
       };
 
@@ -429,7 +455,7 @@
           if (!activeQuizRef.current) return;
           startListeningHandsFree((transcript) => {
             if (!activeQuizRef.current) return;
-            setUserTypedAnswer(transcript); 
+            setUserTypedAnswer(transcript);
             evaluateVoiceAnswer(transcript, index, quizCards);
           });
         });
@@ -440,17 +466,18 @@
         const card = quizCards[index];
         const normalize = (str) => str.replace(/[^a-zA-Z0-9가-힣ㄱ-ㅎ]/g, "").toLowerCase();
         const correctAnswer = card.answer;
-        
+
         const passWords = ["모르겠어", "몰라", "패스", "모릅니다", "다음", "통과"];
         const isPass = passWords.some(pw => userAnswer.includes(pw)) || userAnswer === "패스";
 
-        const isCorrect = !isPass && (normalize(userAnswer) === normalize(correctAnswer) || 
+        const isCorrect = !isPass && (normalize(userAnswer) === normalize(correctAnswer) ||
                           (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1));
-        
+
         setQuizResults(prev => [...prev, {
           question: getFullQuestion(card),
           userAnswer: isPass && userAnswer === "패스" ? "(무응답/패스)" : userAnswer,
           correctAnswer: correctAnswer,
+          explanation: card.explanation || "",
           isCorrect: isCorrect
         }]);
 
@@ -466,10 +493,10 @@
           feedbackText = `오답입니다. 정답은, ${correctAnswer}, 입니다.`;
           showFeedback(`오답입니다. 정답: ${correctAnswer}`);
         }
-        
+
         speakText(feedbackText, () => {
           if (!activeQuizRef.current) return;
-          
+
           if (isCorrect) {
             setIsTransitioning(false);
             setUserTypedAnswer("");
@@ -482,54 +509,66 @@
             }
           } else {
             // 오답이면 대기 모드 활성화 (타이머 없이 대기)
-            setIsWaitingForNext(true); 
+            setIsWaitingForNext(true);
           }
         });
       };
 
-      const generateOptions = (correctAnswer, allCards) => {
-        let uniqueAnswers = Array.from(new Set(allCards.map(c => c.answer)));
-        let pool = uniqueAnswers.filter(a => a !== correctAnswer);
-        
-        while (pool.length < 3) {
-          pool.push("관련 없는 임의의 내용 " + Math.random().toString(36).substr(2, 5));
+      // 카드에 저장된 오답 선지(wrong1~3)가 있으면 우선 사용하고,
+      // 없거나 부족하면 기존 방식(다른 카드의 정답 풀)으로 채움
+      const generateOptions = (card, allCards) => {
+        const correctAnswer = card.answer;
+        let distractors = [card.wrong1, card.wrong2, card.wrong3]
+          .filter(w => w && String(w).trim() && w !== correctAnswer);
+        distractors = Array.from(new Set(distractors));
+
+        if (distractors.length < 3) {
+          let uniqueAnswers = Array.from(new Set(allCards.map(c => c.answer)));
+          let pool = uniqueAnswers.filter(a => a !== correctAnswer && !distractors.includes(a));
+          pool = pool.sort(() => 0.5 - Math.random());
+          while (distractors.length < 3 && pool.length > 0) {
+            distractors.push(pool.shift());
+          }
+          while (distractors.length < 3) {
+            distractors.push("관련 없는 임의의 내용 " + Math.random().toString(36).substr(2, 5));
+          }
         }
-        
-        let distractors = pool.sort(() => 0.5 - Math.random()).slice(0, 3);
-        return [correctAnswer, ...distractors].sort(() => 0.5 - Math.random());
+
+        return [correctAnswer, ...distractors.slice(0, 3)].sort(() => 0.5 - Math.random());
       };
 
       const checkMultipleChoiceAnswer = (selectedOption) => {
-        if (isTransitioning) return; 
+        if (isTransitioning) return;
         const currentCard = cards[currentCardIndex];
-        if (!currentCard) return; 
+        if (!currentCard) return;
 
-        setIsTransitioning(true); 
+        setIsTransitioning(true);
 
         const correctAnswer = currentCard.answer;
         const isCorrect = selectedOption === correctAnswer;
-        
+
         setQuizResults(prev => [...prev, {
           question: getFullQuestion(currentCard),
           userAnswer: selectedOption,
           correctAnswer: correctAnswer,
+          explanation: currentCard.explanation || "",
           isCorrect: isCorrect
         }]);
 
         if (isCorrect) {
           setQuizScore(s => s + 1);
           showFeedback("정답입니다! 🎉");
-          
+
           // 정답일 경우에만 자동으로 넘어감
           setTimeout(() => {
-            const nextIndex = currentCardIndex + 1; 
+            const nextIndex = currentCardIndex + 1;
             if (nextIndex < cards.length) {
               setCurrentCardIndex(nextIndex);
-              setMultipleChoiceOptions(generateOptions(cards[nextIndex].answer, cards));
+              setMultipleChoiceOptions(generateOptions(cards[nextIndex], cards));
             } else {
               setView('result');
             }
-            setIsTransitioning(false); 
+            setIsTransitioning(false);
           }, 1200);
         } else {
           showFeedback(`오답입니다. 정답: ${correctAnswer}`);
@@ -538,22 +577,23 @@
       };
 
       const checkTypingAnswer = (userAnswer) => {
-        if (isTransitioning) return; 
+        if (isTransitioning) return;
         const currentCard = cards[currentCardIndex];
-        if (!currentCard) return; 
+        if (!currentCard) return;
 
-        setIsTransitioning(true); 
+        setIsTransitioning(true);
 
         const normalize = (str) => str.replace(/[^a-zA-Z0-9가-힣ㄱ-ㅎ]/g, "").toLowerCase();
         const correctAnswer = currentCard.answer;
-        
-        const isCorrect = normalize(userAnswer) === normalize(correctAnswer) || 
+
+        const isCorrect = normalize(userAnswer) === normalize(correctAnswer) ||
                           (correctAnswer.includes('\n') && normalize(correctAnswer).includes(normalize(userAnswer)) && userAnswer.length > 1);
-        
+
         setQuizResults(prev => [...prev, {
           question: getFullQuestion(currentCard),
           userAnswer: userAnswer,
           correctAnswer: correctAnswer,
+          explanation: currentCard.explanation || "",
           isCorrect: isCorrect
         }]);
 
@@ -561,7 +601,7 @@
           setQuizScore(s => s + 1);
           showFeedback("정답입니다! 🎉");
           setUserTypedAnswer("");
-          
+
           // 정답일 경우 자동 넘어감
           setTimeout(() => {
             if (currentCardIndex < cards.length - 1) {
@@ -569,13 +609,43 @@
             } else {
               setView('result');
             }
-            setIsTransitioning(false); 
+            setIsTransitioning(false);
           }, 1200);
         } else {
           showFeedback(`오답입니다. 정답: ${correctAnswer}`);
           setIsWaitingForNext(true); // 오답일 경우 다음 버튼 대기
         }
       };
+
+      const formatCell = (cell) => {
+         let str = String(cell === undefined || cell === null ? '' : cell).trim();
+         if (str.includes('\n') || str.includes(',') || str.includes('"')) {
+             return `"${str.replace(/"/g, '""')}"`;
+         }
+         return str;
+      };
+
+      // CSV/TSV 텍스트를 행 단위로 분리 (따옴표 안의 줄바꿈 보존)
+      const splitRows = (text) => {
+        const parsedRows = [];
+        let currentRow = "";
+        let inQuotes = false;
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+          if (char === '"') inQuotes = !inQuotes;
+          if (!inQuotes && char === '\n') {
+            parsedRows.push(currentRow);
+            currentRow = "";
+          } else {
+            currentRow += char;
+          }
+        }
+        if (currentRow) parsedRows.push(currentRow);
+        return parsedRows;
+      };
+
+      const splitCols = (row) => row.split(/\t|,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+      const cleanCell = (s) => (s === undefined ? '' : String(s)).replace(/^"|"$/g, '').replace(/""/g, '"').trim();
 
       const handleFileUpload = (e) => {
         const file = e.target.files[0];
@@ -589,20 +659,12 @@
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
             const json = window.XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-            
-            const formatCell = (cell) => {
-               let str = String(cell || '').trim();
-               if (str.includes('\n') || str.includes(',') || str.includes('"')) {
-                   return `"${str.replace(/"/g, '""')}"`;
-               }
-               return str;
-            };
 
             const parsedText = json
               .filter(row => row.length >= 2 && row[0] !== undefined && row[1] !== undefined)
               .map(row => `${formatCell(row[0])},${formatCell(row[1])}`)
               .join('\n');
-            
+
             setImportText(prev => prev ? prev + '\n' + parsedText : parsedText);
             showFeedback("엑셀 변환 완료! 내용을 확인하고 업로드하세요.");
           } catch (error) {
@@ -611,7 +673,37 @@
           }
         };
         reader.readAsArrayBuffer(file);
-        e.target.value = ''; 
+        e.target.value = '';
+      };
+
+      // 암기박스용 엑셀 업로드: A문제 / B정답 / C~E오답1~3 / F단원 / G해설 (7열)
+      const handleAmboxFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = window.XLSX.read(data, { type: 'array' });
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const json = window.XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+            const parsedText = json
+              .filter(row => row.length >= 2 && row[0] !== undefined && row[1] !== undefined)
+              .map(row => Array.from({ length: 7 }, (_, i) => formatCell(row[i])).join(','))
+              .join('\n');
+
+            setImportText(prev => prev ? prev + '\n' + parsedText : parsedText);
+            showFeedback("엑셀 변환 완료! 내용을 확인하고 업로드하세요.");
+          } catch (error) {
+            console.error(error);
+            showFeedback("파일 파싱 오류가 발생했습니다.");
+          }
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value = '';
       };
 
       const handleImport = async () => {
@@ -622,9 +714,9 @@
 
         setIsLoading(true);
         try {
-          const subjectsRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('subjects');
+          const subjectsRef = getSubjectsRef('normal');
           const subjectDocRef = subjectsRef.doc(importSubjectName.trim());
-          
+
           await subjectDocRef.set({
             name: importSubjectName.trim(),
             updatedAt: Date.now(),
@@ -632,47 +724,123 @@
           });
 
           const cardsRef = subjectDocRef.collection('cards');
-          
-          let uploadCount = 0;
-          let currentRow = "";
-          let inQuotes = false;
 
-          const parsedRows = [];
-          for (let i = 0; i < importText.length; i++) {
-            const char = importText[i];
-            if (char === '"') inQuotes = !inQuotes;
-            if (!inQuotes && char === '\n') {
-              parsedRows.push(currentRow);
-              currentRow = "";
-            } else {
-              currentRow += char;
-            }
-          }
-          if (currentRow) parsedRows.push(currentRow);
+          let uploadCount = 0;
+          const parsedRows = splitRows(importText);
+
+          // 배치 저장 (400개 단위로 커밋)
+          let batch = db.batch();
+          let ops = 0;
 
           for (const row of parsedRows) {
-            const parts = row.split(/\t|,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+            const parts = splitCols(row);
             if (parts.length < 2) continue;
-            
+
             let q = parts[0].replace(/^"|"$/g, '').trim();
             let a = parts[1].replace(/^"|"$/g, '').trim();
+
+            if (!q || !a) continue;
+            if (q === '문제' && a === '정답') continue; // 헤더 행 건너뛰기
 
             const category = "일반";
             const cleanQuestion = q;
 
-            await cardsRef.add({
+            batch.set(cardsRef.doc(), {
               category,
               question: cleanQuestion,
               answer: a,
               createdAt: Date.now()
             });
+            ops++;
             uploadCount++;
+
+            if (ops >= 400) {
+              await batch.commit();
+              batch = db.batch();
+              ops = 0;
+            }
           }
+          if (ops > 0) await batch.commit();
 
           setImportText("");
           setImportSubjectName("");
           setView('home');
           showFeedback(`${uploadCount}개의 문항이 등록되었습니다!`);
+        } catch (e) {
+          console.error(e);
+          showFeedback("업로드 중 오류가 발생했습니다.");
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      // 암기박스 업로드: 오답 선지 + 단원 + 해설까지 저장
+      const handleAmboxImport = async () => {
+        if (!importSubjectName.trim() || !importText.trim()) {
+          showFeedback("과목명과 데이터를 모두 입력해주세요.");
+          return;
+        }
+
+        setIsLoading(true);
+        try {
+          const subjectsRef = getSubjectsRef('ambox');
+          const subjectDocRef = subjectsRef.doc(importSubjectName.trim());
+
+          await subjectDocRef.set({
+            name: importSubjectName.trim(),
+            updatedAt: Date.now(),
+            uploader: user.uid
+          });
+
+          const cardsRef = subjectDocRef.collection('cards');
+
+          let uploadCount = 0;
+          const parsedRows = splitRows(importText);
+
+          let batch = db.batch();
+          let ops = 0;
+
+          for (const row of parsedRows) {
+            const parts = splitCols(row);
+            if (parts.length < 2) continue;
+
+            const q = cleanCell(parts[0]);
+            const a = cleanCell(parts[1]);
+
+            if (!q || !a) continue;
+            if (q === '문제' && a === '정답') continue; // 헤더 행 건너뛰기
+
+            const wrong1 = cleanCell(parts[2]);
+            const wrong2 = cleanCell(parts[3]);
+            const wrong3 = cleanCell(parts[4]);
+            const category = cleanCell(parts[5]) || "일반";
+            const explanation = cleanCell(parts[6]);
+
+            batch.set(cardsRef.doc(), {
+              category,
+              question: q,
+              answer: a,
+              wrong1,
+              wrong2,
+              wrong3,
+              explanation,
+              createdAt: Date.now()
+            });
+            ops++;
+            uploadCount++;
+
+            if (ops >= 400) {
+              await batch.commit();
+              batch = db.batch();
+              ops = 0;
+            }
+          }
+          if (ops > 0) await batch.commit();
+
+          setImportText("");
+          setImportSubjectName("");
+          setView('ambox-home');
+          showFeedback(`${uploadCount}개의 문항이 암기박스에 등록되었습니다!`);
         } catch (e) {
           console.error(e);
           showFeedback("업로드 중 오류가 발생했습니다.");
@@ -704,11 +872,11 @@
         setUserTypedAnswer("");
 
         if (type === 'multipleChoice') {
-          setMultipleChoiceOptions(generateOptions(shuffledCards[0].answer, shuffledCards));
+          setMultipleChoiceOptions(generateOptions(shuffledCards[0], shuffledCards));
         }
 
         setView('quiz');
-        activeQuizRef.current = true; 
+        activeQuizRef.current = true;
 
         if (type === 'voice') {
           setTimeout(() => runVoiceTurn(0, shuffledCards), 500);
@@ -720,11 +888,11 @@
           <button onClick={() => setView('home')} className="p-2 hover:bg-slate-100 rounded-xl transition-all active:scale-90">
             <Icon name="Home" className="text-indigo-600" size={22} />
           </button>
-          
+
           <h1 className={`font-black text-slate-800 tracking-tight ${isDesktopMode ? 'text-xl' : 'text-base'}`}>Smart Study</h1>
-          
-          <button 
-            onClick={() => setIsDesktopMode(!isDesktopMode)} 
+
+          <button
+            onClick={() => setIsDesktopMode(!isDesktopMode)}
             className={`flex items-center gap-2 p-1.5 px-3 rounded-full border transition-all active:scale-95 ${isDesktopMode ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
             title="PC/모바일 모드 전환"
           >
@@ -750,15 +918,46 @@
         <div className="min-h-screen flex flex-col text-slate-700">
           <Header />
           {isLoading && <LoadingOverlay />}
-          
+
           {feedback && (
             <div className="fixed top-20 left-1/2 transform -translate-x-1/2 bg-slate-800/95 text-white px-6 py-3 rounded-2xl shadow-2xl z-50 animate-in text-sm font-medium backdrop-blur-sm max-w-[90vw] md:max-w-md text-center break-keep">
               {feedback}
             </div>
           )}
 
+          {/* 과목 삭제 확인 모달 (홈/암기박스 공용) */}
+          {subjectToDelete && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-2xl max-w-sm w-full text-center border border-slate-100 animate-in zoom-in-95">
+                <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Icon name="AlertCircle" size={32} />
+                </div>
+                <h3 className="text-xl font-black text-slate-800 mb-2">과목 삭제</h3>
+                <p className="text-sm text-slate-500 mb-6 break-keep">
+                  <strong className="text-rose-500">{subjectToDelete.name}</strong> 과목과 모든 문제 데이터를 삭제하시겠습니까?<br/>이 작업은 되돌릴 수 없습니다.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setSubjectToDelete(null)}
+                    disabled={isDeleting}
+                    className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSubject(subjectToDelete)}
+                    disabled={isDeleting}
+                    className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 transition-colors flex justify-center items-center h-[48px]"
+                  >
+                    {isDeleting ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : '삭제하기'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <main className={`mx-auto px-4 py-4 w-full flex-grow flex flex-col transition-all duration-300 ${isDesktopMode ? 'max-w-5xl' : 'max-w-md'}`}>
-            
+
             {/* 메인 홈 */}
             {view === 'home' && (
               <div className="space-y-6 pt-2">
@@ -772,14 +971,32 @@
                   <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
                 </div>
 
+                {/* 암기박스 메인 메뉴 */}
+                <button
+                  onClick={() => setView('ambox-home')}
+                  className={`w-full flex items-center bg-gradient-to-br from-amber-400 to-orange-500 rounded-[2rem] text-white shadow-xl shadow-amber-100 relative overflow-hidden hover:shadow-2xl active:scale-[0.98] transition-all text-left ${isDesktopMode ? 'py-8 px-10' : 'py-5 px-6'}`}
+                >
+                  <div className={`bg-white/20 rounded-2xl flex items-center justify-center flex-shrink-0 ${isDesktopMode ? 'p-4 mr-6' : 'p-3 mr-4'}`}>
+                    <Icon name="Archive" size={isDesktopMode ? 32 : 24} />
+                  </div>
+                  <div className="relative z-10 flex-grow">
+                    <div className={`font-black mb-1 ${isDesktopMode ? 'text-2xl' : 'text-lg'}`}>암기박스 📦</div>
+                    <div className={`opacity-90 font-medium leading-relaxed ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>
+                      오답 선지가 설계된 4지선다 전용 문제집 · {amboxSubjects.length}개 과목
+                    </div>
+                  </div>
+                  <Icon name="ChevronRight" size={isDesktopMode ? 28 : 20} className="opacity-70 flex-shrink-0" />
+                  <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
+                </button>
+
                 <div className="flex items-center justify-between px-1">
                   <h3 className={`font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
                     <Icon name="Search" size={isDesktopMode ? 18 : 14} /> Available Subjects
                   </h3>
                   <div className="flex gap-2">
                     {/* 데이터 삭제 토글 버튼 추가 */}
-                    <button 
-                      onClick={() => setIsDeleteMode(!isDeleteMode)} 
+                    <button
+                      onClick={() => setIsDeleteMode(!isDeleteMode)}
                       className={`font-bold rounded-full active:scale-95 transition-all ${isDeleteMode ? 'bg-rose-500 text-white' : 'text-rose-500 bg-rose-50'} ${isDesktopMode ? 'text-xs px-4 py-2' : 'text-[10px] px-3 py-1'}`}
                     >
                       {isDeleteMode ? '완료' : '- 데이터 삭제'}
@@ -798,12 +1015,12 @@
                   ) : (
                     subjects.map((sub) => (
                       <div key={sub.id} className="relative group">
-                        <button 
+                        <button
                           onClick={() => {
                             if (isDeleteMode) {
-                              setSubjectToDelete(sub);
+                              setSubjectToDelete({ ...sub, _type: 'normal' });
                             } else {
-                              loadCards(sub.id);
+                              loadCards(sub.id, 'normal');
                             }
                           }}
                           className={`w-full flex items-center bg-white rounded-2xl border ${isDeleteMode ? 'border-rose-200 hover:bg-rose-50' : 'border-slate-100 hover:border-indigo-200 hover:shadow-md'} shadow-sm transition-all active:scale-[0.98] text-left ${isDesktopMode ? 'p-6' : 'p-4'}`}
@@ -820,37 +1037,76 @@
                     ))
                   )}
                 </div>
+              </div>
+            )}
 
-                {/* 과목 삭제 확인 모달 */}
-                {subjectToDelete && (
-                  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-2xl max-w-sm w-full text-center border border-slate-100 animate-in zoom-in-95">
-                      <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Icon name="AlertCircle" size={32} />
-                      </div>
-                      <h3 className="text-xl font-black text-slate-800 mb-2">과목 삭제</h3>
-                      <p className="text-sm text-slate-500 mb-6 break-keep">
-                        <strong className="text-rose-500">{subjectToDelete.name}</strong> 과목과 모든 문제 데이터를 삭제하시겠습니까?<br/>이 작업은 되돌릴 수 없습니다.
-                      </p>
-                      <div className="flex gap-3">
-                        <button 
-                          onClick={() => setSubjectToDelete(null)}
-                          disabled={isDeleting}
-                          className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors"
-                        >
-                          취소
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteSubject(subjectToDelete)}
-                          disabled={isDeleting}
-                          className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-bold hover:bg-rose-600 transition-colors flex justify-center items-center h-[48px]"
-                        >
-                          {isDeleting ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : '삭제하기'}
-                        </button>
-                      </div>
-                    </div>
+            {/* 암기박스 홈 */}
+            {view === 'ambox-home' && (
+              <div className="space-y-6 pt-2 animate-in">
+                <div className={`bg-gradient-to-br from-amber-400 to-orange-500 rounded-[2rem] text-white shadow-xl shadow-amber-100 relative overflow-hidden ${isDesktopMode ? 'py-12 px-10' : 'py-6 px-6'}`}>
+                  <div className="relative z-10">
+                    <h2 className={`font-bold mb-2 ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>암기박스 📦</h2>
+                    <p className={`opacity-90 font-medium leading-relaxed ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>
+                      문항마다 오답 선지가 미리 설계된 4지선다 전용 문제집입니다.<br/>암기카드와 객관식 퀴즈 모두 이용할 수 있습니다.
+                    </p>
                   </div>
-                )}
+                  <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
+                </div>
+
+                <div className="flex items-center justify-between px-1">
+                  <h3 className={`font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
+                    <Icon name="Archive" size={isDesktopMode ? 18 : 14} /> Ambox Subjects
+                  </h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setIsDeleteMode(!isDeleteMode)}
+                      className={`font-bold rounded-full active:scale-95 transition-all ${isDeleteMode ? 'bg-rose-500 text-white' : 'text-rose-500 bg-rose-50'} ${isDesktopMode ? 'text-xs px-4 py-2' : 'text-[10px] px-3 py-1'}`}
+                    >
+                      {isDeleteMode ? '완료' : '- 데이터 삭제'}
+                    </button>
+                    <button onClick={() => setView('ambox-import')} className={`font-bold text-amber-600 bg-amber-50 rounded-full active:scale-95 transition-all ${isDesktopMode ? 'text-xs px-4 py-2' : 'text-[10px] px-3 py-1'}`}>
+                      + 암기박스 업로드
+                    </button>
+                  </div>
+                </div>
+
+                <div className={`grid gap-4 ${isDesktopMode ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}>
+                  {amboxSubjects.length === 0 ? (
+                    <div className="py-12 text-center bg-white rounded-3xl border border-dashed border-slate-200 col-span-full">
+                      <p className={`text-slate-400 ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>등록된 암기박스가 없습니다.<br/>오른쪽 위 [+ 암기박스 업로드]로 첫 문제집을 등록해보세요!</p>
+                    </div>
+                  ) : (
+                    amboxSubjects.map((sub) => (
+                      <div key={sub.id} className="relative group">
+                        <button
+                          onClick={() => {
+                            if (isDeleteMode) {
+                              setSubjectToDelete({ ...sub, _type: 'ambox' });
+                            } else {
+                              loadCards(sub.id, 'ambox');
+                            }
+                          }}
+                          className={`w-full flex items-center bg-white rounded-2xl border ${isDeleteMode ? 'border-rose-200 hover:bg-rose-50' : 'border-slate-100 hover:border-amber-300 hover:shadow-md'} shadow-sm transition-all active:scale-[0.98] text-left ${isDesktopMode ? 'p-6' : 'p-4'}`}
+                        >
+                          <div className={`${isDeleteMode ? 'bg-rose-100 text-rose-500 group-hover:bg-rose-500 group-hover:text-white' : 'bg-amber-50 text-amber-600 group-hover:bg-amber-500 group-hover:text-white'} rounded-xl transition-colors ${isDesktopMode ? 'p-4 mr-5' : 'p-2.5 mr-4'}`}>
+                            <Icon name={isDeleteMode ? "Trash2" : "Archive"} size={isDesktopMode ? 28 : 22} />
+                          </div>
+                          <div>
+                            <div className={`font-bold text-slate-800 ${isDesktopMode ? 'text-lg mb-1' : 'text-sm'}`}>{sub.name}</div>
+                            <div className={`text-slate-400 ${isDesktopMode ? 'text-xs' : 'text-[10px] mt-0.5'}`}>최근 업데이트: {new Date(sub.updatedAt).toLocaleDateString()}</div>
+                          </div>
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <button
+                  onClick={() => { setIsDeleteMode(false); setView('home'); }}
+                  className={`w-full font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors ${isDesktopMode ? 'py-6 text-xs' : 'py-4 text-[10px]'}`}
+                >
+                  메인 홈으로 돌아가기
+                </button>
               </div>
             )}
 
@@ -858,9 +1114,14 @@
             {view === 'subject-home' && selectedSubject && (
               <div className="space-y-6 pt-2 animate-in">
                 <div className={`bg-white rounded-[2rem] border border-slate-100 shadow-sm text-center relative overflow-hidden ${isDesktopMode ? 'p-10' : 'p-6'}`}>
-                  <div className={`bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto text-indigo-600 ${isDesktopMode ? 'w-16 h-16 mb-6' : 'w-12 h-12 mb-4'}`}>
-                    <Icon name="BookMarked" size={isDesktopMode ? 36 : 28} />
+                  <div className={`${subjectType === 'ambox' ? 'bg-amber-100 text-amber-600' : 'bg-indigo-100 text-indigo-600'} rounded-2xl flex items-center justify-center mx-auto ${isDesktopMode ? 'w-16 h-16 mb-6' : 'w-12 h-12 mb-4'}`}>
+                    <Icon name={subjectType === 'ambox' ? "Archive" : "BookMarked"} size={isDesktopMode ? 36 : 28} />
                   </div>
+                  {subjectType === 'ambox' && (
+                    <div className="mb-2">
+                      <span className={`inline-block bg-amber-50 text-amber-600 border border-amber-200 rounded-full font-black tracking-widest ${isDesktopMode ? 'text-[11px] px-4 py-1' : 'text-[9px] px-3 py-0.5'}`}>암기박스 📦</span>
+                    </div>
+                  )}
                   <h2 className={`font-black text-slate-800 ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>{selectedSubject.name}</h2>
                   <div className="inline-block mt-4 bg-slate-50 px-5 py-2 rounded-full border border-slate-100">
                     <span className={`font-bold text-slate-400 tracking-widest ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>총 문항 수: {cards.length} CARDS</span>
@@ -868,9 +1129,9 @@
                 </div>
 
                 <div className={`grid gap-4 ${isDesktopMode ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                  
+
                   {/* 전체 카드 암기 버튼 */}
-                  <button 
+                  <button
                     onClick={() => startStudy('all')}
                     className={`flex items-center bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-indigo-200 hover:shadow-md transition-all active:scale-[0.98] ${isDesktopMode ? 'p-6 flex-col justify-center gap-4 col-span-3' : 'p-4 col-span-2'}`}
                   >
@@ -891,9 +1152,9 @@
                           {[1,2,3,4,5].map(num => (
                               <div key={num} className="relative flex-shrink-0 mt-2 mr-2">
                                   {savedSlots[num] && (
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); deleteSlot(num); }} 
-                                        className="absolute -top-2 -right-2 bg-slate-200 text-slate-500 rounded-full p-1.5 hover:bg-rose-500 hover:text-white transition-colors z-10 shadow-sm" 
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); deleteSlot(num); }}
+                                        className="absolute -top-2 -right-2 bg-slate-200 text-slate-500 rounded-full p-1.5 hover:bg-rose-500 hover:text-white transition-colors z-10 shadow-sm"
                                         title="슬롯 비우기"
                                       >
                                           <Icon name="X" size={12} />
@@ -919,15 +1180,15 @@
                   </div>
 
                   {/* 퀴즈 영역 */}
-                  <button 
+                  <button
                     onClick={() => startQuiz('voice')}
                     className={`bg-white rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-3 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all active:scale-[0.98] ${isDesktopMode ? 'py-10' : 'py-4'}`}
                   >
                     <Icon name="Mic" className="text-indigo-500" size={isDesktopMode ? 36 : 20} />
                     <span className={`font-black text-slate-600 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[9px]'}`}>Voice Quiz</span>
                   </button>
-                  
-                  <button 
+
+                  <button
                     onClick={() => startQuiz('typing')}
                     className={`bg-white rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-3 hover:border-emerald-200 hover:bg-emerald-50/30 transition-all active:scale-[0.98] ${isDesktopMode ? 'py-10' : 'py-4'}`}
                   >
@@ -935,7 +1196,7 @@
                     <span className={`font-black text-slate-600 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[9px]'}`}>Typing Quiz</span>
                   </button>
 
-                  <button 
+                  <button
                     onClick={() => startQuiz('multipleChoice')}
                     className={`bg-white rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-3 hover:border-blue-200 hover:bg-blue-50/30 transition-all active:scale-[0.98] ${isDesktopMode ? 'py-10' : 'py-4 col-span-2'}`}
                   >
@@ -943,9 +1204,9 @@
                     <span className={`font-black text-slate-600 uppercase tracking-widest ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>객관식 퀴즈 (4지선다)</span>
                   </button>
                 </div>
-                  
-                <button 
-                  onClick={() => setView('home')}
+
+                <button
+                  onClick={() => setView(subjectType === 'ambox' ? 'ambox-home' : 'home')}
                   className={`w-full font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors ${isDesktopMode ? 'py-6 text-xs' : 'py-4 text-[10px]'}`}
                 >
                   다른 과목 선택하기
@@ -961,7 +1222,7 @@
                   <button onClick={() => setView('subject-home')} className={`text-slate-400 hover:text-slate-600 font-bold transition-colors ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>학습 종료</button>
                 </div>
 
-                <div 
+                <div
                   onClick={handleCardClick}
                   className={`w-full flex-grow relative cursor-pointer transition-all duration-500 preserve-3d shadow-2xl shadow-indigo-100/40 rounded-[2.5rem] active:scale-[0.99] ${isFlipped ? 'rotate-y-180' : ''}`}
                   style={{ minHeight: isDesktopMode ? '60vh' : '55vh' }}
@@ -973,8 +1234,8 @@
                     </div>
                     <div className="flex-grow overflow-y-auto px-8 md:px-12 flex flex-col custom-scrollbar">
                       <div className={`m-auto font-bold text-slate-800 leading-relaxed whitespace-pre-wrap break-keep w-full text-center py-6 ${
-                        isDesktopMode 
-                          ? (getFullQuestion(studyList[currentCardIndex]).length > 80 ? 'text-2xl lg:text-3xl' : getFullQuestion(studyList[currentCardIndex]).length > 40 ? 'text-3xl lg:text-4xl' : 'text-4xl lg:text-5xl') 
+                        isDesktopMode
+                          ? (getFullQuestion(studyList[currentCardIndex]).length > 80 ? 'text-2xl lg:text-3xl' : getFullQuestion(studyList[currentCardIndex]).length > 40 ? 'text-3xl lg:text-4xl' : 'text-4xl lg:text-5xl')
                           : (getFullQuestion(studyList[currentCardIndex]).length > 50 ? 'text-xl' : 'text-2xl')
                       }`}>
                         {renderQuestionContent(getFullQuestion(studyList[currentCardIndex]))}
@@ -984,7 +1245,7 @@
                       TOUCH FOR ANSWER
                     </div>
                   </div>
-                  
+
                   {/* 카드 뒷면 (정답) */}
                   <div className="absolute inset-0 bg-[#1e293b] rotate-y-180 backface-hidden rounded-[2.5rem] border-2 border-indigo-500/20 shadow-inner flex flex-col overflow-hidden">
                     <div className={`flex-shrink-0 pt-8 md:pt-10 px-8 md:px-12 text-left ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
@@ -992,12 +1253,20 @@
                     </div>
                     <div className="flex-grow overflow-y-auto px-8 md:px-12 flex flex-col custom-scrollbar">
                       <div className={`m-auto font-bold text-white leading-relaxed whitespace-pre-wrap break-keep w-full text-center py-6 ${
-                        isDesktopMode 
-                          ? (studyList[currentCardIndex]?.answer.length > 150 ? 'text-xl lg:text-2xl' : studyList[currentCardIndex]?.answer.length > 80 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl') 
+                        isDesktopMode
+                          ? (studyList[currentCardIndex]?.answer.length > 150 ? 'text-xl lg:text-2xl' : studyList[currentCardIndex]?.answer.length > 80 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl')
                           : (studyList[currentCardIndex]?.answer.length > 80 ? 'text-lg' : 'text-xl')
                       }`}>
                         {studyList[currentCardIndex]?.answer}
                       </div>
+                      {/* 해설이 있으면 정답 아래에 표시 (암기박스) */}
+                      {studyList[currentCardIndex]?.explanation && (
+                        <div className="w-full text-center pb-6 flex-shrink-0">
+                          <div className={`inline-block bg-white/10 rounded-xl px-5 py-3 text-slate-300 leading-relaxed whitespace-pre-wrap break-keep text-left ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
+                            💡 {studyList[currentCardIndex].explanation}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className={`flex-shrink-0 pb-8 pt-2 text-center text-slate-400 font-bold tracking-widest animate-pulse ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
                       외웠다면 카드를 터치하세요 (다음 문제)
@@ -1027,7 +1296,7 @@
                   <Icon name="BookOpen" size={isDesktopMode ? 56 : 40} />
                 </div>
                 <h2 className={`font-black text-slate-800 mb-8 tracking-tighter uppercase ${isDesktopMode ? 'text-3xl' : 'text-lg'}`}>학습 완료!</h2>
-                
+
                 <div className={`bg-white w-full rounded-3xl border border-slate-100 shadow-sm mb-8 ${isDesktopMode ? 'p-10' : 'p-6'}`}>
                   <div className="flex justify-around items-center">
                     <div className="flex flex-col">
@@ -1051,7 +1320,7 @@
                     <button onClick={() => startStudy('review')} className={`w-full bg-rose-500 text-white rounded-2xl font-black shadow-xl shadow-rose-200 hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-2 ${isDesktopMode ? 'py-6 text-sm' : 'py-4 text-xs'}`}>
                       <Icon name="RotateCcw" size={isDesktopMode ? 20 : 16} /> 못 외운 {notMemorizedCards.length}개 지금 다시하기
                     </button>
-                    
+
                     {/* 다음을 위해 저장하기 (슬롯 1~5) */}
                     <div className="bg-white rounded-2xl border border-rose-100 p-4 md:p-6 shadow-sm text-center">
                        <h3 className={`font-black text-rose-600 mb-4 flex justify-center items-center gap-2 ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
@@ -1088,7 +1357,7 @@
             {/* 퀴즈 모드 */}
             {view === 'quiz' && cards[currentCardIndex] && (
               <div className="animate-in max-w-3xl mx-auto w-full flex flex-col h-full flex-grow pb-4 relative">
-                
+
                 {/* 오답 확인용 전체화면 모달 오버레이 */}
                 {isWaitingForNext && (
                   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
@@ -1097,11 +1366,18 @@
                              <Icon name="AlertCircle" size={32} />
                          </div>
                          <h3 className="text-xl md:text-2xl font-black text-slate-800 mb-3">앗, 틀렸습니다!</h3>
-                         <div className="bg-indigo-50/50 p-4 rounded-xl mb-6 border border-indigo-50 text-left overflow-y-auto max-h-48 custom-scrollbar">
+                         <div className="bg-indigo-50/50 p-4 rounded-xl mb-3 border border-indigo-50 text-left overflow-y-auto max-h-48 custom-scrollbar">
                              <span className="text-indigo-400 font-black text-[10px] uppercase tracking-widest block mb-1">정답</span>
                              <span className="text-slate-700 font-bold whitespace-pre-wrap text-sm md:text-base leading-relaxed break-keep">{cards[currentCardIndex]?.answer}</span>
                          </div>
-                         <button 
+                         {/* 해설이 있으면 함께 표시 (암기박스) */}
+                         {cards[currentCardIndex]?.explanation && (
+                           <div className="bg-amber-50/70 p-4 rounded-xl mb-6 border border-amber-100 text-left overflow-y-auto max-h-40 custom-scrollbar">
+                               <span className="text-amber-500 font-black text-[10px] uppercase tracking-widest block mb-1">💡 해설</span>
+                               <span className="text-slate-600 whitespace-pre-wrap text-xs md:text-sm leading-relaxed break-keep">{cards[currentCardIndex].explanation}</span>
+                           </div>
+                         )}
+                         <button
                              onClick={handleNextClick}
                              className="w-full bg-slate-800 text-white py-4 rounded-xl font-black text-sm md:text-base hover:bg-slate-900 active:scale-95 transition-all flex justify-center items-center gap-2"
                          >
@@ -1125,18 +1401,18 @@
                   <div className={`absolute top-6 left-8 text-slate-300 font-black ${isDesktopMode ? 'text-3xl' : 'text-xl'}`}>
                     Q{currentCardIndex + 1}.
                   </div>
-                  
+
                   <div className="flex items-start justify-center gap-4 w-full flex-grow pt-8">
                     <div className={`font-bold text-slate-800 leading-snug break-keep w-full text-center ${
-                      isDesktopMode 
-                        ? (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl') 
+                      isDesktopMode
+                        ? (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-3xl' : 'text-4xl lg:text-5xl')
                         : (getFullQuestion(cards[currentCardIndex]).length > 60 ? 'text-xl' : 'text-2xl')
                     }`}>
                       {renderQuestionContent(getFullQuestion(cards[currentCardIndex]))}
                     </div>
                     {quizType === 'voice' && (
-                      <button 
-                        onClick={() => speakText(getFullQuestion(cards[currentCardIndex]))} 
+                      <button
+                        onClick={() => speakText(getFullQuestion(cards[currentCardIndex]))}
                         className={`flex-shrink-0 bg-indigo-50 text-indigo-500 rounded-full hover:bg-indigo-100 active:scale-95 transition-all shadow-sm ${isDesktopMode ? 'p-3 mt-1' : 'p-2 mt-0.5'}`}
                         title="문제 다시 듣기"
                       >
@@ -1149,21 +1425,21 @@
                 {quizType === 'multipleChoice' && multipleChoiceOptions.length > 0 && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 w-full flex-shrink-0 animate-in slide-in-from-bottom-2">
                     {multipleChoiceOptions.map((opt, idx) => (
-                      <button 
+                      <button
                         key={idx}
                         onClick={() => checkMultipleChoiceAnswer(opt)}
                         disabled={isTransitioning || isWaitingForNext}
                         className={`w-full p-4 md:p-6 text-left rounded-2xl border-2 shadow-sm transition-all flex items-center gap-4 group ${
-                          isTransitioning 
-                            ? (opt === cards[currentCardIndex]?.answer 
+                          isTransitioning
+                            ? (opt === cards[currentCardIndex]?.answer
                                 ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                                 : 'border-slate-100 bg-slate-50 text-slate-400')
                             : 'border-slate-100 bg-white hover:border-blue-400 hover:shadow-md active:scale-95 text-slate-700'
                         }`}
                       >
                         <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-black flex-shrink-0 ${
-                          isTransitioning && opt === cards[currentCardIndex]?.answer 
-                            ? 'bg-emerald-500 text-white' 
+                          isTransitioning && opt === cards[currentCardIndex]?.answer
+                            ? 'bg-emerald-500 text-white'
                             : 'bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600'
                         } ${isDesktopMode ? 'text-base' : 'text-sm'}`}>
                           {idx + 1}
@@ -1202,11 +1478,11 @@
                     </div>
                   </div>
                 )}
-                
+
                 {quizType === 'typing' && (
                   <div className="animate-in slide-in-from-bottom-2 w-full flex-shrink-0">
                     <div className="relative">
-                      <input 
+                      <input
                         type="text" autoFocus value={userTypedAnswer}
                         onChange={(e) => setUserTypedAnswer(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && checkTypingAnswer(userTypedAnswer)}
@@ -1214,9 +1490,9 @@
                         disabled={isTransitioning || isWaitingForNext}
                         className={`w-full rounded-[2.5rem] border-2 border-slate-100 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50 outline-none shadow-sm transition-all font-bold text-slate-800 placeholder:text-slate-300 disabled:opacity-50 ${isDesktopMode ? 'py-8 px-10 text-2xl' : 'py-6 px-7 text-base'}`}
                       />
-                      <button 
-                        onClick={() => checkTypingAnswer(userTypedAnswer)} 
-                        disabled={isTransitioning || isWaitingForNext} 
+                      <button
+                        onClick={() => checkTypingAnswer(userTypedAnswer)}
+                        disabled={isTransitioning || isWaitingForNext}
                         className={`absolute aspect-square bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-emerald-600 active:scale-90 transition-all disabled:opacity-50 disabled:active:scale-100 ${isDesktopMode ? 'right-4 top-4 bottom-4 w-16' : 'right-3 top-3 bottom-3 w-12'}`}
                       >
                         <Icon name="Send" size={isDesktopMode ? 28 : 20} />
@@ -1227,17 +1503,17 @@
               </div>
             )}
 
-            {/* 업로드 화면 */}
+            {/* 업로드 화면 (기존 A/B 2열 형식) */}
             {view === 'import' && (
               <div className="h-full animate-in max-w-3xl mx-auto w-full">
                 <h3 className={`font-black text-slate-800 mb-6 flex items-center gap-2 ${isDesktopMode ? 'text-xl' : 'text-sm'}`}>
                   <Icon name="Upload" size={isDesktopMode ? 24 : 18} className="text-indigo-600" /> 클라우드에 새 과목 등록
                 </h3>
-                
+
                 <div className={`space-y-6 bg-white rounded-3xl border border-slate-100 shadow-sm ${isDesktopMode ? 'p-10' : 'p-5'}`}>
                   <div>
                     <label className={`font-bold text-slate-500 uppercase tracking-widest mb-2 block ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>과목명 또는 작성자 이름</label>
-                    <input 
+                    <input
                       type="text"
                       value={importSubjectName}
                       onChange={(e) => setImportSubjectName(e.target.value)}
@@ -1245,7 +1521,7 @@
                       className={`w-full rounded-xl border border-slate-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 outline-none font-bold transition-all ${isDesktopMode ? 'p-5 text-base' : 'p-4 text-sm'}`}
                     />
                   </div>
-                  
+
                   <div>
                     <div className="flex justify-between items-end mb-2">
                       <label className={`font-bold text-slate-500 uppercase tracking-widest block ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>데이터 본문</label>
@@ -1255,7 +1531,7 @@
                         <input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} />
                       </label>
                     </div>
-                    <textarea 
+                    <textarea
                       value={importText} onChange={(e) => setImportText(e.target.value)}
                       placeholder="A열에는 '문제', B열에는 '정답'이 적혀있는 엑셀 영역을 드래그하여 복사한 후, 여기에 그대로 붙여넣기 하세요!&#13;&#10;&#13;&#10;또는 오른쪽 위 [엑셀 파일 첨부] 버튼을 눌러 파일을 직접 올릴 수도 있습니다."
                       className={`w-full rounded-xl border border-slate-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 outline-none resize-none leading-relaxed transition-all ${isDesktopMode ? 'h-96 p-6 text-sm' : 'h-56 p-4 text-xs'}`}
@@ -1263,8 +1539,58 @@
                   </div>
 
                   <div className="flex gap-3 pt-2">
-                    <button onClick={() => setView('home')} className={`flex-1 bg-slate-100 text-slate-500 rounded-xl font-bold hover:bg-slate-200 transition-colors ${isDesktopMode ? 'py-5 text-sm' : 'py-4 text-xs'}`}>취소</button>
+                    <button onClick={() => { setImportText(""); setImportSubjectName(""); setView('home'); }} className={`flex-1 bg-slate-100 text-slate-500 rounded-xl font-bold hover:bg-slate-200 transition-colors ${isDesktopMode ? 'py-5 text-sm' : 'py-4 text-xs'}`}>취소</button>
                     <button onClick={handleImport} className={`flex-[2] bg-indigo-600 text-white rounded-xl font-black shadow-lg shadow-indigo-200 hover:bg-indigo-700 active:scale-[0.98] transition-all tracking-widest ${isDesktopMode ? 'py-5 text-sm' : 'py-4 text-xs'}`}>CLOUD UPLOAD</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 암기박스 업로드 화면 (7열 형식: 문제/정답/오답1~3/단원/해설) */}
+            {view === 'ambox-import' && (
+              <div className="h-full animate-in max-w-3xl mx-auto w-full">
+                <h3 className={`font-black text-slate-800 mb-6 flex items-center gap-2 ${isDesktopMode ? 'text-xl' : 'text-sm'}`}>
+                  <Icon name="Archive" size={isDesktopMode ? 24 : 18} className="text-amber-500" /> 암기박스 문제집 등록
+                </h3>
+
+                <div className={`bg-amber-50 border border-amber-200 rounded-2xl mb-6 ${isDesktopMode ? 'p-6' : 'p-4'}`}>
+                  <p className={`text-amber-700 font-bold leading-relaxed ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>
+                    📋 엑셀 형식: A열 문제 · B열 정답 · C~E열 오답1~3 · F열 단원 · G열 해설<br/>
+                    <span className="font-medium opacity-80">단원·해설은 비어 있어도 됩니다. 첫 행이 제목 행(문제/정답...)이면 자동으로 건너뜁니다.</span>
+                  </p>
+                </div>
+
+                <div className={`space-y-6 bg-white rounded-3xl border border-slate-100 shadow-sm ${isDesktopMode ? 'p-10' : 'p-5'}`}>
+                  <div>
+                    <label className={`font-bold text-slate-500 uppercase tracking-widest mb-2 block ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>문제집 이름</label>
+                    <input
+                      type="text"
+                      value={importSubjectName}
+                      onChange={(e) => setImportSubjectName(e.target.value)}
+                      placeholder="예: 상담이론 암기박스 1"
+                      className={`w-full rounded-xl border border-slate-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-50 outline-none font-bold transition-all ${isDesktopMode ? 'p-5 text-base' : 'p-4 text-sm'}`}
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-end mb-2">
+                      <label className={`font-bold text-slate-500 uppercase tracking-widest block ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>데이터 본문</label>
+                      <label className="cursor-pointer bg-amber-50 text-amber-600 px-4 py-2 rounded-xl flex items-center gap-2 hover:bg-amber-100 transition-colors active:scale-95 shadow-sm">
+                        <Icon name="FileSpreadsheet" size={isDesktopMode ? 18 : 14} />
+                        <span className={`font-bold ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>엑셀 파일 첨부</span>
+                        <input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleAmboxFileUpload} />
+                      </label>
+                    </div>
+                    <textarea
+                      value={importText} onChange={(e) => setImportText(e.target.value)}
+                      placeholder="문제/정답/오답1/오답2/오답3/단원/해설 순서로 정리된 엑셀 영역을 드래그하여 복사한 후, 여기에 그대로 붙여넣기 하세요!&#13;&#10;&#13;&#10;또는 오른쪽 위 [엑셀 파일 첨부] 버튼을 눌러 파일을 직접 올릴 수도 있습니다."
+                      className={`w-full rounded-xl border border-slate-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-50 outline-none resize-none leading-relaxed transition-all ${isDesktopMode ? 'h-96 p-6 text-sm' : 'h-56 p-4 text-xs'}`}
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button onClick={() => { setImportText(""); setImportSubjectName(""); setView('ambox-home'); }} className={`flex-1 bg-slate-100 text-slate-500 rounded-xl font-bold hover:bg-slate-200 transition-colors ${isDesktopMode ? 'py-5 text-sm' : 'py-4 text-xs'}`}>취소</button>
+                    <button onClick={handleAmboxImport} className={`flex-[2] bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl font-black shadow-lg shadow-amber-200 hover:from-amber-600 hover:to-orange-600 active:scale-[0.98] transition-all tracking-widest ${isDesktopMode ? 'py-5 text-sm' : 'py-4 text-xs'}`}>암기박스 UPLOAD</button>
                   </div>
                 </div>
               </div>
@@ -1277,7 +1603,7 @@
                   <Icon name="CheckCircle2" size={isDesktopMode ? 56 : 40} />
                 </div>
                 <h2 className={`font-black text-slate-800 mb-8 tracking-tighter uppercase ${isDesktopMode ? 'text-3xl' : 'text-lg'}`}>Finished!</h2>
-                
+
                 <div className={`bg-white w-full rounded-3xl border border-slate-100 shadow-sm mb-8 ${isDesktopMode ? 'p-10' : 'p-6'}`}>
                   <div className={`text-slate-300 font-black uppercase tracking-[0.3em] mb-2 ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>Score</div>
                   <div className={`font-black text-indigo-600 ${isDesktopMode ? 'text-6xl' : 'text-4xl'}`}>{quizScore} <span className={`text-slate-200 font-light mx-2 ${isDesktopMode ? 'text-3xl' : 'text-base'}`}>/</span> {cards.length}</div>
@@ -1296,7 +1622,7 @@
                         </span>
                       </div>
                       <p className={`font-bold text-slate-800 mb-4 ${isDesktopMode ? 'text-base leading-relaxed' : 'text-xs'}`}>{res.question}</p>
-                      
+
                       <div className="space-y-2.5 pt-4 border-t border-slate-100">
                         <div className="flex gap-3">
                           <span className={`font-black text-slate-400 pt-0.5 uppercase ${isDesktopMode ? 'text-[10px] w-14' : 'text-[8px] w-10'}`}>Yours</span>
@@ -1306,6 +1632,12 @@
                           <div className="flex gap-3">
                             <span className={`font-black text-indigo-400 pt-0.5 uppercase ${isDesktopMode ? 'text-[10px] w-14' : 'text-[8px] w-10'}`}>Answer</span>
                             <span className={`text-indigo-600 font-bold whitespace-pre-wrap ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>{res.correctAnswer}</span>
+                          </div>
+                        )}
+                        {!res.isCorrect && res.explanation && (
+                          <div className="flex gap-3">
+                            <span className={`font-black text-amber-500 pt-0.5 uppercase ${isDesktopMode ? 'text-[10px] w-14' : 'text-[8px] w-10'}`}>해설</span>
+                            <span className={`text-slate-500 whitespace-pre-wrap ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>{res.explanation}</span>
                           </div>
                         )}
                       </div>
