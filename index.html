@@ -47,7 +47,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useMemo } = React;
 
     const firebaseConfig = {
       apiKey: "AIzaSyCzzNzdmAfXhZ0ElcLeIHQb0z5Qbbj8fFs",
@@ -65,6 +65,17 @@
     const auth = firebase.auth();
     const db = firebase.firestore();
     const APP_ID = 'study-master-v1';
+
+    // 균일하게 섞이는 피셔-예이츠 셔플
+    // (sort(() => 0.5 - Math.random()) 방식은 편향이 생겨 같은 문항이 반복 출제됨)
+    const shuffle = (arr) => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
 
     const Icon = ({ name, size = 24, className = "" }) => {
       const iconRef = useRef(null);
@@ -103,6 +114,7 @@
       const [subjectType, setSubjectType] = useState('normal'); // 'normal' | 'ambox'
 
       const [cards, setCards] = useState([]);
+      const [solvedQuestions, setSolvedQuestions] = useState([]); // 4지선다에서 맞힌 문제(문제 텍스트 기준)
 
       const [studyList, setStudyList] = useState([]);
       const [notMemorizedCards, setNotMemorizedCards] = useState([]);
@@ -110,7 +122,7 @@
       const [savedSlots, setSavedSlots] = useState({ 1: null, 2: null, 3: null, 4: null, 5: null });
 
       const [quizList, setQuizList] = useState([]); // 이번 테스트에 출제된 문항(전체 중 일부)
-      const [quizCount, setQuizCount] = useState(25); // 테스트당 문항 수 (0 = 전체)
+      const [quizCount, setQuizCount] = useState(30); // 테스트당 문항 수 (0 = 전체)
       const [quizWrongCards, setQuizWrongCards] = useState([]); // 테스트에서 틀린 문항
 
       const [currentCardIndex, setCurrentCardIndex] = useState(0);
@@ -140,6 +152,19 @@
       // 과목 타입별 Firestore 컬렉션 참조 (일반 / 암기박스 분리 저장)
       const getSubjectsRef = (type) => db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection(type === 'ambox' ? 'amboxSubjects' : 'subjects');
       const slotDocId = (subjId, type, num) => `${type === 'ambox' ? 'ambox_' : ''}${subjId}_${num}`;
+
+      // 오답노트 슬롯: 계정(익명 uid) 아래가 아니라 공용 위치에 저장 → PC/폰 공유
+      const sharedSlotsRef = () => db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('slots');
+      // 맞힌 문제 기록: 문제집마다 하나의 문서에 문제 텍스트 목록으로 저장 → PC/폰 공유
+      const progressRef = (type, subjId) => getSubjectsRef(type).doc(subjId).collection('meta').doc('progress');
+
+      // 아직 맞히지 못한 문항 수
+      const solvedSet = useMemo(() => new Set(solvedQuestions), [solvedQuestions]);
+      const remainingCount = useMemo(
+        () => cards.filter(c => !solvedSet.has(c.question)).length,
+        [cards, solvedSet]
+      );
+      const plannedCount = quizCount > 0 ? Math.min(quizCount, remainingCount) : remainingCount;
 
       const getFullQuestion = (card) => {
         if (!card) return "";
@@ -239,11 +264,10 @@
         return () => unsubscribe();
       }, [user]);
 
+      // 오답노트 슬롯 구독 (공용 위치 → PC/폰 공유)
       useEffect(() => {
         if (!user || !selectedSubject) return;
-        const slotsRef = db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots');
-
-        const unsubscribe = slotsRef.onSnapshot(snapshot => {
+        const unsubscribe = sharedSlotsRef().onSnapshot(snapshot => {
            const slots = { 1: null, 2: null, 3: null, 4: null, 5: null };
            snapshot.forEach(doc => {
                const data = doc.data();
@@ -257,19 +281,27 @@
         return () => unsubscribe();
       }, [user, selectedSubject, subjectType]);
 
+      // 맞힌 문제 기록 구독 (공용 위치 → PC/폰 공유)
+      useEffect(() => {
+        if (!user || !selectedSubject) {
+          setSolvedQuestions([]);
+          return;
+        }
+        const unsubscribe = progressRef(subjectType, selectedSubject.id).onSnapshot(snap => {
+          setSolvedQuestions(snap.exists ? (snap.data().solved || []) : []);
+        }, err => console.error("Progress Error:", err));
+
+        return () => unsubscribe();
+      }, [user, selectedSubject, subjectType]);
+
       const loadCards = async (subjectId, type = 'normal') => {
         setIsLoading(true);
         try {
           const cardsRef = getSubjectsRef(type).doc(subjectId).collection('cards');
           const snapshot = await cardsRef.get();
-          let loadedCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const loadedCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-          for (let i = loadedCards.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [loadedCards[i], loadedCards[j]] = [loadedCards[j], loadedCards[i]];
-          }
-
-          setCards(loadedCards);
+          setCards(shuffle(loadedCards));
           const sub = (type === 'ambox' ? amboxSubjects : subjects).find(s => s.id === subjectId);
           setSelectedSubject(sub);
           setSubjectType(type);
@@ -297,6 +329,9 @@
             await batch.commit();
           }
 
+          // 맞힌 문제 기록도 함께 정리
+          try { await progressRef(type, subject.id).delete(); } catch (e) { /* 없으면 무시 */ }
+
           await subjectDocRef.delete();
 
           showFeedback(`${subject.name} 과목이 삭제되었습니다.`);
@@ -310,6 +345,34 @@
         }
       };
 
+      // 4지선다에서 정답을 맞힌 문항 기록 (문제 텍스트 기준 → 엑셀 재업로드해도 기록 유지)
+      const markSolved = async (card) => {
+        if (!user || !selectedSubject || !card || !card.question) return;
+        try {
+          await progressRef(subjectType, selectedSubject.id).set({
+            solved: firebase.firestore.FieldValue.arrayUnion(card.question),
+            updatedAt: Date.now()
+          }, { merge: true });
+        } catch (e) {
+          console.error("Progress save error:", e);
+        }
+      };
+
+      // 출제 기록 초기화 (해당 문제집만)
+      const resetProgress = async () => {
+        if (!user || !selectedSubject) return;
+        setIsLoading(true);
+        try {
+          await progressRef(subjectType, selectedSubject.id).set({ solved: [], updatedAt: Date.now() });
+          showFeedback("출제 기록을 초기화했습니다. 전체 문항이 다시 출제됩니다.");
+        } catch (e) {
+          console.error(e);
+          showFeedback("초기화에 실패했습니다.");
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
       const saveToSlot = async (slotNum, cardList = notMemorizedCards) => {
         if (!user || !cardList || cardList.length === 0) {
           showFeedback("저장할 오답이 없습니다.");
@@ -317,7 +380,7 @@
         }
         setIsLoading(true);
         try {
-          await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(slotDocId(selectedSubject.id, subjectType, slotNum)).set({
+          await sharedSlotsRef().doc(slotDocId(selectedSubject.id, subjectType, slotNum)).set({
              subjectId: selectedSubject.id,
              subjectType: subjectType,
              slotNum: slotNum,
@@ -336,7 +399,7 @@
       const deleteSlot = async (slotNum) => {
         if (!user || !selectedSubject) return;
         try {
-            await db.collection('artifacts').doc(APP_ID).collection('users').doc(user.uid).collection('slots').doc(slotDocId(selectedSubject.id, subjectType, slotNum)).delete();
+            await sharedSlotsRef().doc(slotDocId(selectedSubject.id, subjectType, slotNum)).delete();
             showFeedback(`슬롯 ${slotNum}이(가) 비워졌습니다.`);
         } catch(e) {
             console.error(e);
@@ -357,8 +420,7 @@
           return;
         }
 
-        const shuffledCards = targetCards.sort(() => 0.5 - Math.random());
-        setStudyList(shuffledCards);
+        setStudyList(shuffle(targetCards));
         setCurrentCardIndex(0);
         setIsFlipped(false);
         setNotMemorizedCards([]);
@@ -546,9 +608,8 @@
         distractors = Array.from(new Set(distractors));
 
         if (distractors.length < 3) {
-          let uniqueAnswers = Array.from(new Set(allCards.map(c => c.answer)));
-          let pool = uniqueAnswers.filter(a => a !== correctAnswer && !distractors.includes(a));
-          pool = pool.sort(() => 0.5 - Math.random());
+          const uniqueAnswers = Array.from(new Set(allCards.map(c => c.answer)));
+          let pool = shuffle(uniqueAnswers.filter(a => a !== correctAnswer && !distractors.includes(a)));
           while (distractors.length < 3 && pool.length > 0) {
             distractors.push(pool.shift());
           }
@@ -557,7 +618,7 @@
           }
         }
 
-        return [correctAnswer, ...distractors.slice(0, 3)].sort(() => 0.5 - Math.random());
+        return shuffle([correctAnswer, ...distractors.slice(0, 3)]);
       };
 
       const checkMultipleChoiceAnswer = (selectedOption) => {
@@ -580,6 +641,7 @@
 
         if (isCorrect) {
           setQuizScore(s => s + 1);
+          markSolved(currentCard); // 맞힌 문항은 다음 회차부터 제외
           showFeedback("정답입니다! 🎉");
 
           // 정답일 경우에만 자동으로 넘어감
@@ -885,11 +947,23 @@
           return;
         }
 
-        // 전체 문항을 섞은 뒤 설정된 문항 수만큼만 출제 (0이면 전체)
-        const shuffledCards = [...cards].sort(() => 0.5 - Math.random());
-        const picked = (quizCount > 0 && quizCount < shuffledCards.length)
-          ? shuffledCards.slice(0, quizCount)
-          : shuffledCards;
+        // 4지선다는 이미 맞힌 문항을 제외하고 출제
+        let pool = cards;
+        if (type === 'multipleChoice') {
+          pool = cards.filter(c => !solvedSet.has(c.question));
+          if (pool.length === 0) {
+            showFeedback("모든 문항을 맞혔습니다! [출제 기록 초기화]를 누르면 다시 풀 수 있어요 🎉");
+            return;
+          }
+        }
+
+        // 설정된 문항 수만큼 뽑되, 남은 문항이 적으면 있는 만큼만 출제 (0 = 전체)
+        const need = quizCount > 0 ? Math.min(quizCount, pool.length) : pool.length;
+        const picked = shuffle(pool).slice(0, need);
+
+        if (type === 'multipleChoice' && quizCount > 0 && need < quizCount) {
+          showFeedback(`아직 안 맞힌 문항이 ${pool.length}개라 ${need}문제만 출제합니다.`);
+        }
 
         setQuizList(picked);
         setQuizType(type);
@@ -1209,16 +1283,31 @@
                       </div>
                   </div>
 
-                  {/* 테스트 문항 수 선택 */}
+                  {/* 테스트 문항 수 선택 + 출제 진행 상황 */}
                   <div className={`col-span-full bg-white rounded-2xl border border-slate-100 shadow-sm p-4 md:p-6`}>
-                    <h3 className={`font-black text-slate-700 flex items-center gap-2 mb-4 ${isDesktopMode ? 'text-base' : 'text-xs'}`}>
-                      <Icon name="ListChecks" size={16} className="text-blue-500" /> 테스트 문항 수
-                      <span className={`font-bold text-slate-400 ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>
-                        (전체 {cards.length}문항 중 {quizCount === 0 || quizCount > cards.length ? cards.length : quizCount}문항 랜덤 출제)
-                      </span>
-                    </h3>
+                    <div className="flex justify-between items-start gap-3 mb-4 flex-wrap">
+                      <div>
+                        <h3 className={`font-black text-slate-700 flex items-center gap-2 ${isDesktopMode ? 'text-base' : 'text-xs'}`}>
+                          <Icon name="ListChecks" size={16} className="text-blue-500" /> 테스트 문항 수
+                        </h3>
+                        <p className={`text-slate-400 font-bold mt-2 leading-relaxed ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>
+                          아직 안 맞힌 문항 <span className="text-blue-600 font-black">{remainingCount}</span>개 / 전체 {cards.length}개
+                          <br className="sm:hidden" />
+                          <span className="hidden sm:inline"> · </span>
+                          이번 4지선다 출제 <span className="text-blue-600 font-black">{plannedCount}</span>문항
+                        </p>
+                      </div>
+                      <button
+                        onClick={resetProgress}
+                        className={`flex-shrink-0 font-bold rounded-full border-2 border-slate-100 bg-slate-50 text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500 active:scale-95 transition-all ${isDesktopMode ? 'text-xs px-4 py-2' : 'text-[10px] px-3 py-1.5'}`}
+                        title="맞힌 문제 기록을 지우고 전체 문항을 다시 출제합니다"
+                      >
+                        ↺ 출제 기록 초기화
+                      </button>
+                    </div>
+
                     <div className="flex gap-2 flex-wrap">
-                      {[10, 15, 20, 25, 30].map(n => (
+                      {[0, 30, 40, 50, 60].map(n => (
                         <button
                           key={n}
                           onClick={() => setQuizCount(n)}
@@ -1228,10 +1317,16 @@
                               : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-blue-300 hover:bg-blue-50'
                           } ${isDesktopMode ? 'px-6 py-3 text-sm' : 'px-4 py-2 text-xs'}`}
                         >
-                          {`${n}문제`}
+                          {n === 0 ? '전체' : `${n}문제`}
                         </button>
                       ))}
                     </div>
+
+                    {cards.length > 0 && remainingCount === 0 && (
+                      <div className={`mt-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl px-4 py-3 font-bold break-keep ${isDesktopMode ? 'text-sm' : 'text-xs'}`}>
+                        🎉 모든 문항을 맞혔습니다! [출제 기록 초기화]를 누르면 처음부터 다시 출제됩니다.
+                      </div>
+                    )}
                   </div>
 
                   {/* 퀴즈 영역 */}
@@ -1622,7 +1717,8 @@
                 <div className={`bg-amber-50 border border-amber-200 rounded-2xl mb-6 ${isDesktopMode ? 'p-6' : 'p-4'}`}>
                   <p className={`text-amber-700 font-bold leading-relaxed ${isDesktopMode ? 'text-sm' : 'text-[11px]'}`}>
                     📋 엑셀 형식: A열 문제 · B열 정답 · C~E열 오답1~3 · F열 단원 · G열 해설<br/>
-                    <span className="font-medium opacity-80">단원·해설은 비어 있어도 됩니다. 첫 행이 제목 행(문제/정답...)이면 자동으로 건너뜁니다.</span>
+                    <span className="font-medium opacity-80">단원·해설은 비어 있어도 됩니다. 첫 행이 제목 행(문제/정답...)이면 자동으로 건너뜁니다.</span><br/>
+                    <span className="font-medium opacity-80">※ 같은 이름으로 다시 올리면 문항이 추가로 쌓입니다. 교체하려면 먼저 [- 데이터 삭제]로 지우고 올려주세요.</span>
                   </p>
                 </div>
 
@@ -1673,9 +1769,13 @@
                 <div className={`bg-white w-full rounded-3xl border border-slate-100 shadow-sm mb-8 ${isDesktopMode ? 'p-10' : 'p-6'}`}>
                   <div className={`text-slate-300 font-black uppercase tracking-[0.3em] mb-2 ${isDesktopMode ? 'text-xs' : 'text-[9px]'}`}>Score</div>
                   <div className={`font-black text-indigo-600 ${isDesktopMode ? 'text-6xl' : 'text-4xl'}`}>{quizScore} <span className={`text-slate-200 font-light mx-2 ${isDesktopMode ? 'text-3xl' : 'text-base'}`}>/</span> {quizList.length}</div>
-                  <div className={`text-slate-400 font-bold mt-3 ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>
-                    전체 {cards.length}문항 중 {quizList.length}문항 랜덤 출제
-                  </div>
+                  {quizType === 'multipleChoice' && (
+                    <div className={`text-slate-400 font-bold mt-3 leading-relaxed ${isDesktopMode ? 'text-xs' : 'text-[10px]'}`}>
+                      맞힌 {quizScore}문항은 다음 회차부터 출제되지 않습니다
+                      <br/>
+                      남은 문항 <span className="text-blue-600 font-black">{remainingCount}</span>개 / 전체 {cards.length}개
+                    </div>
+                  )}
                 </div>
 
                 {/* 틀린 문제 → 오답노트 슬롯 저장 */}
